@@ -81,13 +81,13 @@ function roundRect(ctx, x, y, w, h, r) {
 // ============================================================
 const CFG = {
   trackWidth: 220,
-  maxSpeed: 300,
-  accel: 160,
+  maxSpeed: 450,
+  accel: 220,
   brake: 380,
   drag: 40,
   offTrackDrag: 500,
-  turnLow: 2.6,
-  turnHigh: 0.75,
+  turnLow: 3.0,
+  turnHigh: 0.85,
 };
 
 const DIFFICULTY = {
@@ -116,12 +116,28 @@ function getActiveCars() {
   return cars;
 }
 
-// Camera focus modes
-const CAM_MODES = [
-  { label: '玩家1' },
-  { label: '全部' },
-];
-let camModeIdx = 1;
+// Focus target — null = show all, or reference to a car
+let focusTarget = null;
+
+function getFocusLabel(target) {
+  if (target === null) return '全部';
+  if (target === p1) return '玩家1';
+  if (target === p2) return '玩家2';
+  if (target === a1) return 'AI #44';
+  if (target === a2) return 'AI #77';
+  return '全部';
+}
+
+function cycleFocus() {
+  const opts = [null, p1];
+  if (gameSettings.mode === 'dual') opts.push(p2);
+  if (gameSettings.aiCount >= 1) opts.push(a1);
+  if (gameSettings.aiCount >= 2) opts.push(a2);
+  let idx = opts.indexOf(focusTarget);
+  if (idx === -1) idx = 0;
+  focusTarget = opts[(idx + 1) % opts.length];
+  document.getElementById('btnCamFocus').textContent = '焦点: ' + getFocusLabel(focusTarget);
+}
 
 // Lap count options
 const LAP_OPTIONS = [3, 5, 8, 10];
@@ -230,7 +246,7 @@ const startIdx = 120;
 const stHeading = Math.atan2(track[startIdx].tx, -track[startIdx].ty);
 const stX = track[startIdx].x, stY = track[startIdx].y;
 const stNX = track[startIdx].nx * 28, stNY = track[startIdx].ny * 28;
-const stBX = -Math.sin(stHeading) * 30, stBY = Math.cos(stHeading) * 30; // backward offset
+const stBX = -Math.sin(stHeading) * 42, stBY = Math.cos(stHeading) * 42; // backward offset
 
 // ============================================================
 // CARS
@@ -306,6 +322,7 @@ const cam = { x: 0, y: 0 };
 const ZOOM = 0.85;
 (function initCam() {
   const cars = getActiveCars();
+  if (focusTarget) { cam.x = focusTarget.x - W / (2 * ZOOM); cam.y = focusTarget.y - H / (2 * ZOOM); return; }
   let mx = 0, my = 0;
   for (const c of cars) { mx += c.x; my += c.y; }
   mx /= cars.length; my /= cars.length;
@@ -413,7 +430,7 @@ function updateAI(car, dt) {
     let err = recoverAngle - car.heading;
     while (err > Math.PI) err -= 2 * Math.PI;
     while (err < -Math.PI) err += 2 * Math.PI;
-    car.heading += Math.sign(err) * Math.min(Math.abs(err), 3.5 * dt);
+    car.heading += Math.sign(err) * Math.min(Math.abs(err), 4.5 * dt);
     car.speed = Math.max(car.speed - CFG.brake * dt, 30);
     car.x += Math.sin(car.heading) * car.speed * dt;
     car.y -= Math.cos(car.heading) * car.speed * dt;
@@ -425,8 +442,8 @@ function updateAI(car, dt) {
     return;
   }
 
-  // === Look-ahead (further for higher speed) ===
-  const lookSteps = 28 + Math.floor((car.speed / CFG.maxSpeed) * 50);
+  // === Steering look-ahead ===
+  const lookSteps = 25 + Math.floor((car.speed / CFG.maxSpeed) * 35);
   const tIdx = (car.trackIdx + Math.min(lookSteps, track.length - 1)) % track.length;
   const target = track[tIdx];
 
@@ -442,21 +459,50 @@ function updateAI(car, dt) {
   if (car.errTimer <= 0) { car.errDrift = (Math.random() - 0.5) * 0.10 * diff.errorScale; car.errTimer = 0.5 + Math.random() * 0.6; }
 
   const steerGain = errAbs > Math.PI / 2 ? 1.6 : 1.0;
-  car.heading += Math.sign(headingErr + car.errDrift) * Math.min(Math.abs(headingErr + car.errDrift), 3.0 * dt) * steerGain;
+  car.heading += Math.sign(headingErr + car.errDrift) * Math.min(Math.abs(headingErr + car.errDrift), 4.5 * dt) * steerGain;
 
-  // === Curvature look-ahead ===
-  const ca1 = (car.trackIdx + 30) % track.length, ca2 = (car.trackIdx + 60) % track.length;
+  // === Far look-ahead for speed control (see corners early) ===
+  const speedSteps = 60 + Math.floor((car.speed / CFG.maxSpeed) * 100);
+  const stIdx = (car.trackIdx + Math.min(speedSteps, track.length - 1)) % track.length;
+  const sTarget = track[stIdx];
+  const sDx = sTarget.x - car.x, sDy = sTarget.y - car.y;
+  const sAngle = Math.atan2(sDx, -sDy);
+  let sErr = sAngle - car.heading;
+  while (sErr > Math.PI) sErr -= 2 * Math.PI;
+  while (sErr < -Math.PI) sErr += 2 * Math.PI;
+  const sErrAbs = Math.abs(sErr);
+
+  // === Curvature look-ahead (speed-scaled) ===
+  const curvOff = 15 + Math.floor((car.speed / CFG.maxSpeed) * 55);
+  const ca1 = (car.trackIdx + curvOff) % track.length;
+  const ca2 = (car.trackIdx + Math.min(curvOff * 2, track.length - 1)) % track.length;
   let curv = Math.abs(Math.atan2(track[ca2].ty, track[ca2].tx) - Math.atan2(track[ca1].ty, track[ca1].tx));
   if (curv > Math.PI) curv = 2 * Math.PI - curv;
 
-  // === Speed selection — fast on straights, minimal braking ===
+  // === Centripetal speed cap: v_max = sqrt(a_max / curvature) ===
+  const maxLatAccel = 9000;
+  let curvMax = CFG.maxSpeed;
+  if (curv > 0.001) curvMax = Math.min(CFG.maxSpeed, Math.sqrt(maxLatAccel / curv));
+
+  // === Speed selection — use far look-ahead error + curvature cap ===
   let base;
-  if (errAbs < 0.04 && curv < 0.02) base = CFG.maxSpeed;
-  else if (errAbs < 0.10 || curv < 0.05) base = CFG.maxSpeed * 0.94;
-  else if (errAbs < 0.20 || curv < 0.10) base = CFG.maxSpeed * 0.82;
-  else if (errAbs < 0.35 || curv < 0.20) base = CFG.maxSpeed * 0.65;
-  else if (errAbs < 0.55 || curv < 0.35) base = CFG.maxSpeed * 0.45;
-  else base = CFG.maxSpeed * 0.28;
+  if (sErrAbs < 0.04 && curv < 0.02) base = curvMax;
+  else if (sErrAbs < 0.10 || curv < 0.05) base = Math.min(curvMax, CFG.maxSpeed * 0.94);
+  else if (sErrAbs < 0.20 || curv < 0.10) base = Math.min(curvMax, CFG.maxSpeed * 0.82);
+  else if (sErrAbs < 0.35 || curv < 0.20) base = Math.min(curvMax, CFG.maxSpeed * 0.65);
+  else if (sErrAbs < 0.55 || curv < 0.35) base = Math.min(curvMax, CFG.maxSpeed * 0.45);
+  else base = Math.min(curvMax, CFG.maxSpeed * 0.28);
+
+  // Also blend with near error for chicanes
+  const nearBlend = 0.6;
+  let nearBase;
+  if (errAbs < 0.04 && curv < 0.02) nearBase = curvMax;
+  else if (errAbs < 0.10 || curv < 0.05) nearBase = Math.min(curvMax, CFG.maxSpeed * 0.94);
+  else if (errAbs < 0.20 || curv < 0.10) nearBase = Math.min(curvMax, CFG.maxSpeed * 0.82);
+  else if (errAbs < 0.35 || curv < 0.20) nearBase = Math.min(curvMax, CFG.maxSpeed * 0.65);
+  else if (errAbs < 0.55 || curv < 0.35) nearBase = Math.min(curvMax, CFG.maxSpeed * 0.45);
+  else nearBase = Math.min(curvMax, CFG.maxSpeed * 0.28);
+  base = Math.min(base * (1 - nearBlend) + nearBase * nearBlend, curvMax);
 
   // Anti-spin
   if (errAbs > Math.PI / 2) base *= 0.20;
@@ -475,10 +521,21 @@ function updateAI(car, dt) {
   car.x += Math.sin(car.heading) * car.speed * dt;
   car.y -= Math.cos(car.heading) * car.speed * dt;
 
-  // Keep on track (stronger pull)
-  if (n.dist > CFG.trackWidth * 0.35) {
-    const pull = (n.dist - CFG.trackWidth * 0.35) * dt * 4;
+  // Keep on track — stronger pull at high speed
+  const pullThresh = CFG.trackWidth * (0.25 + 0.10 * (car.speed / CFG.maxSpeed));
+  if (n.dist > pullThresh) {
+    const pull = (n.dist - pullThresh) * dt * (6 + 4 * (car.speed / CFG.maxSpeed));
     car.x += track[n.idx].nx * pull; car.y += track[n.idx].ny * pull;
+  }
+
+  // === Anti-spin safeguard: if heading differs too much from track tangent, recover ===
+  const trackTangent = Math.atan2(track[car.trackIdx].tx, -track[car.trackIdx].ty);
+  let tanErr = trackTangent - car.heading;
+  while (tanErr > Math.PI) tanErr -= 2 * Math.PI;
+  while (tanErr < -Math.PI) tanErr += 2 * Math.PI;
+  if (Math.abs(tanErr) > Math.PI / 2) {
+    car.heading += Math.sign(tanErr) * Math.min(Math.abs(tanErr), 3.0 * dt);
+    car.speed *= 0.95;
   }
 
   // Sector-based lap detection
@@ -837,7 +894,7 @@ function drawHUD() {
 
   // Speed
   const ds = Math.round(Math.abs(p1.speed * 0.85));
-  const gs = ds > 310 ? 7 : ds > 270 ? 6 : ds > 210 ? 5 : ds > 150 ? 4 : ds > 100 ? 3 : ds > 60 ? 2 : 1;
+  const gs = ds > 380 ? 7 : ds > 320 ? 6 : ds > 260 ? 5 : ds > 190 ? 4 : ds > 120 ? 3 : ds > 70 ? 2 : 1;
 
   ctx.fillStyle = '#888'; ctx.font = '10px "Courier New",monospace';
   ctx.fillText('SPEED', px+16, py+142);
@@ -880,10 +937,10 @@ function drawHUD() {
   ctx.fillStyle = '#88ccff'; ctx.font = 'bold 11px "Courier New",monospace'; ctx.textAlign = 'center';
   ctx.fillText(`难度: ${currentDifficulty.label}`, W-68, infoY+18);
 
-  // Camera mode indicator
+  // Camera focus indicator
   roundRect(ctx, W-120, infoY+32, 104, 26, 4); ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fill();
   ctx.fillStyle = '#ffaa44'; ctx.font = 'bold 11px "Courier New",monospace'; ctx.textAlign = 'center';
-  ctx.fillText(`焦点: ${CAM_MODES[camModeIdx].label}`, W-68, infoY+50);
+  ctx.fillText(`焦点: ${getFocusLabel(focusTarget)}`, W-68, infoY+50);
 
   // Controls hint
   const hintY = H - 165;
@@ -978,13 +1035,14 @@ function gameLoop(time) {
     }
 
     // Camera
-    const activeCars = getActiveCars();
-    let mx = 0, my = 0;
-    if (camModeIdx === 0) {
-      mx = p1.x; my = p1.y;
+    let mx, my;
+    if (focusTarget) {
+      mx = focusTarget.x; my = focusTarget.y;
     } else {
-      for (const c of activeCars) { mx += c.x; my += c.y; }
-      mx /= activeCars.length; my /= activeCars.length;
+      const cars = getActiveCars();
+      mx = 0; my = 0;
+      for (const c of cars) { mx += c.x; my += c.y; }
+      mx /= cars.length; my /= cars.length;
     }
     const tx = mx - W / (2*ZOOM), ty = my - H / (2*ZOOM);
     cam.x += (tx - cam.x) * 0.09;
@@ -1056,11 +1114,14 @@ document.getElementById('btnReset').addEventListener('click', () => {
   initPositions();
   race.phase = 'IDLE'; race.elapsedTime = 0; race.winner = null;
   race.lightsOn = 0; race.countTimer = 0; race.countStep = 0;
-  const activeCars = getActiveCars();
-  let mx = 0, my = 0;
-  for (const c of activeCars) { mx += c.x; my += c.y; }
-  mx /= activeCars.length; my /= activeCars.length;
-  cam.x = mx - W/(2*ZOOM); cam.y = my - H/(2*ZOOM);
+  if (focusTarget) { cam.x = focusTarget.x - W/(2*ZOOM); cam.y = focusTarget.y - H/(2*ZOOM); }
+  else {
+    const cars = getActiveCars();
+    let mx = 0, my = 0;
+    for (const c of cars) { mx += c.x; my += c.y; }
+    mx /= cars.length; my /= cars.length;
+    cam.x = mx - W/(2*ZOOM); cam.y = my - H/(2*ZOOM);
+  }
 });
 
 document.getElementById('btnDifficulty').addEventListener('click', () => {
@@ -1077,11 +1138,15 @@ document.getElementById('btnMode').addEventListener('click', () => {
   document.getElementById('btnMode').textContent = gameSettings.mode === 'dual' ? '双人' : '单人';
   initPositions();
   race.phase = 'IDLE'; race.elapsedTime = 0; race.winner = null;
-  const activeCars = getActiveCars();
-  let mx = 0, my = 0;
-  for (const c of activeCars) { mx += c.x; my += c.y; }
-  mx /= activeCars.length; my /= activeCars.length;
-  cam.x = mx - W/(2*ZOOM); cam.y = my - H/(2*ZOOM);
+  if (focusTarget && getActiveCars().indexOf(focusTarget) === -1) focusTarget = null;
+  if (focusTarget) { cam.x = focusTarget.x - W/(2*ZOOM); cam.y = focusTarget.y - H/(2*ZOOM); }
+  else {
+    const cars = getActiveCars();
+    let mx = 0, my = 0;
+    for (const c of cars) { mx += c.x; my += c.y; }
+    mx /= cars.length; my /= cars.length;
+    cam.x = mx - W/(2*ZOOM); cam.y = my - H/(2*ZOOM);
+  }
 });
 
 document.getElementById('btnAI').addEventListener('click', () => {
@@ -1090,17 +1155,18 @@ document.getElementById('btnAI').addEventListener('click', () => {
   document.getElementById('btnAI').textContent = 'AI: ' + gameSettings.aiCount;
   initPositions();
   race.phase = 'IDLE'; race.elapsedTime = 0; race.winner = null;
-  const activeCars = getActiveCars();
-  let mx = 0, my = 0;
-  for (const c of activeCars) { mx += c.x; my += c.y; }
-  mx /= activeCars.length; my /= activeCars.length;
-  cam.x = mx - W/(2*ZOOM); cam.y = my - H/(2*ZOOM);
+  if (focusTarget && getActiveCars().indexOf(focusTarget) === -1) focusTarget = null;
+  if (focusTarget) { cam.x = focusTarget.x - W/(2*ZOOM); cam.y = focusTarget.y - H/(2*ZOOM); }
+  else {
+    const cars = getActiveCars();
+    let mx = 0, my = 0;
+    for (const c of cars) { mx += c.x; my += c.y; }
+    mx /= cars.length; my /= cars.length;
+    cam.x = mx - W/(2*ZOOM); cam.y = my - H/(2*ZOOM);
+  }
 });
 
-document.getElementById('btnCamFocus').addEventListener('click', () => {
-  camModeIdx = (camModeIdx + 1) % CAM_MODES.length;
-  document.getElementById('btnCamFocus').textContent = '焦点: ' + CAM_MODES[camModeIdx].label;
-});
+document.getElementById('btnCamFocus').addEventListener('click', () => { cycleFocus(); });
 
 document.getElementById('btnLaps').addEventListener('click', () => {
   if (race.phase === 'RACING' || race.phase === 'COUNTDOWN') return;
