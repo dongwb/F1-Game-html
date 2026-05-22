@@ -252,27 +252,27 @@ const stBX = -Math.sin(stHeading) * 42, stBY = Math.cos(stHeading) * 42; // back
 // CARS
 // ============================================================
 const p1 = {
-  x: 0, y: 0, speed: 0, heading: 0, lapCount: 0, lastSector: -1, onTrack: true, blocked: false,
+  x: 0, y: 0, speed: 0, heading: 0, lapCount: 0, lastSector: -1, onTrack: true, blocked: false, braking: false,
   color: '#cc0000', accent: '#e6b800', num: '16', lapCooldown: 0, lapTime: 0, lapStartTime: 0,
   keys: { up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight' },
 };
 
 const p2 = {
-  x: 0, y: 0, speed: 0, heading: 0, lapCount: 0, lastSector: -1, onTrack: true, blocked: false,
+  x: 0, y: 0, speed: 0, heading: 0, lapCount: 0, lastSector: -1, onTrack: true, blocked: false, braking: false,
   color: '#0055ff', accent: '#ffffff', num: '01', lapCooldown: 0, lapTime: 0, lapStartTime: 0,
   keys: { up: 'w', down: 's', left: 'a', right: 'd' },
 };
 
 const a1 = {
-  x: 0, y: 0, speed: 0, heading: 0, lapCount: 0, lastSector: -1, onTrack: true, blocked: false,
+  x: 0, y: 0, speed: 0, heading: 0, lapCount: 0, lastSector: -1, onTrack: true, blocked: false, braking: false,
   color: '#00d2be', accent: '#00a0cc', num: '44', lapCooldown: 0, lapTime: 0, lapStartTime: 0,
-  errDrift: 0, errTimer: 0, trackIdx: 0,
+  errDrift: 0, errTimer: 0, trackIdx: 0, prevSpeed: 0,
 };
 
 const a2 = {
-  x: 0, y: 0, speed: 0, heading: 0, lapCount: 0, lastSector: -1, onTrack: true, blocked: false,
+  x: 0, y: 0, speed: 0, heading: 0, lapCount: 0, lastSector: -1, onTrack: true, blocked: false, braking: false,
   color: '#ff8800', accent: '#ffcc00', num: '77', lapCooldown: 0, lapTime: 0, lapStartTime: 0,
-  errDrift: 0, errTimer: 0, trackIdx: 0,
+  errDrift: 0, errTimer: 0, trackIdx: 0, prevSpeed: 0,
 };
 
 // ============================================================
@@ -379,6 +379,9 @@ function updatePlayer(car, dt) {
   // Off-track
   car.onTrack = isOnTrack(car.x, car.y);
   if (!car.onTrack) { car.speed -= CFG.offTrackDrag * dt; if (car.speed < 0) car.speed = 0; }
+
+  // Brake lights
+  car.braking = keyState[km.down] && car.speed > 30 && car.onTrack;
 
   // Tire marks (player1 only)
   if (car === p1 && ((keyState[km.down] && car.speed > 80) || ((keyState[km.left] || keyState[km.right]) && car.speed > 120)))
@@ -513,6 +516,10 @@ function updateAI(car, dt) {
   const spdErr = targetSpeed - car.speed;
   if (spdErr > 0) car.speed = Math.min(car.speed + spdErr, car.speed + CFG.accel * diff.accelFactor * dt);
   else car.speed = Math.max(car.speed - Math.min(-spdErr, CFG.brake * diff.brakeFactor * dt), 0);
+
+  // Brake lights — detect hard deceleration
+  car.braking = (car.speed < car.prevSpeed - 8) && car.speed > 30;
+  car.prevSpeed = car.speed;
 
   car.speed -= CFG.drag * (car.speed / CFG.maxSpeed) * dt;
   if (car.speed < 0) car.speed = 0;
@@ -655,6 +662,15 @@ function drawCar(x, y, heading, c) {
   ctx.fillText(c.num, 0, 6*s);
   ctx.fillStyle = c.accent; ctx.fillRect(-1*s,-32*s,2*s,3*s);
 
+  // Brake lights — red glow at rear when braking
+  if (c.braking) {
+    ctx.shadowColor = '#ff0000'; ctx.shadowBlur = 18;
+    ctx.fillStyle = '#ff2200';
+    ctx.beginPath(); ctx.arc(-6*s, 40*s, 4*s, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(6*s, 40*s, 4*s, 0, Math.PI*2); ctx.fill();
+    ctx.shadowBlur = 0;
+  }
+
   // Wheels
   ctx.shadowBlur = 0; ctx.fillStyle = '#222';
   ctx.beginPath(); ctx.ellipse(-16*s,-22*s,5*s,3*s,0,0,Math.PI*2); ctx.fill();
@@ -724,31 +740,40 @@ function drawTrack() {
     ctx.fillRect(cx - 3, cy - 3, 6, 6);
   }
 
-  // Start grid position markers
+  // Start grid — miniature cars
   const gL = 28, gGap = 30;
   const bx = -Math.sin(stHeading), by = Math.cos(stHeading);
-  const gridMarkers = [
-    { x: stX - track[startIdx].nx * gL, y: stY - track[startIdx].ny * gL, label: 'P1' },
-    { x: stX + track[startIdx].nx * gL, y: stY + track[startIdx].ny * gL, label: 'P2' },
-    { x: stX - track[startIdx].nx * gL + bx * gGap, y: stY - track[startIdx].ny * gL + by * gGap, label: 'P3' },
-    { x: stX + track[startIdx].nx * gL + bx * gGap, y: stY + track[startIdx].ny * gL + by * gGap, label: 'P4' },
+  const gridPositions = [
+    { x: stX - track[startIdx].nx * gL, y: stY - track[startIdx].ny * gL },
+    { x: stX + track[startIdx].nx * gL, y: stY + track[startIdx].ny * gL },
+    { x: stX - track[startIdx].nx * gL + bx * gGap, y: stY - track[startIdx].ny * gL + by * gGap },
+    { x: stX + track[startIdx].nx * gL + bx * gGap, y: stY + track[startIdx].ny * gL + by * gGap },
   ];
   const activeCars = getActiveCars();
   for (let i = 0; i < activeCars.length; i++) {
-    const s = gridMarkers[i];
+    const gc = activeCars[i];
+    const gp = gridPositions[i];
     ctx.save();
-    ctx.translate(s.x, s.y);
+    ctx.translate(gp.x, gp.y);
     ctx.rotate(stHeading);
-    ctx.fillStyle = 'rgba(255,255,255,0.08)';
-    ctx.fillRect(-22, -16, 44, 32);
-    ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 1.5;
-    ctx.strokeRect(-22, -16, 44, 32);
-    ctx.fillStyle = 'rgba(255,255,255,0.6)';
-    ctx.font = 'bold 16px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText(activeCars[i].num, 0, 0);
-    ctx.fillStyle = 'rgba(255,255,255,0.35)';
-    ctx.font = '9px "Courier New",monospace'; ctx.textBaseline = 'bottom';
-    ctx.fillText(s.label, 0, -18);
+    // Car body silhouette
+    ctx.fillStyle = gc.color;
+    ctx.beginPath();
+    ctx.moveTo(0, -16); ctx.quadraticCurveTo(4, -15, 7, -11);
+    ctx.lineTo(5, -4); ctx.quadraticCurveTo(4, -2, 3, 0);
+    ctx.lineTo(5, 6); ctx.quadraticCurveTo(8, 9, 8, 12);
+    ctx.lineTo(5, 16); ctx.lineTo(0, 17); ctx.lineTo(-5, 16);
+    ctx.lineTo(-8, 12); ctx.quadraticCurveTo(-8, 9, -5, 6);
+    ctx.lineTo(-3, 0); ctx.quadraticCurveTo(-4, -2, -5, -4);
+    ctx.lineTo(-7, -11); ctx.quadraticCurveTo(-4, -15, 0, -16);
+    ctx.closePath(); ctx.fill();
+    // Accent stripe
+    ctx.fillStyle = gc.accent;
+    ctx.fillRect(-1, -15, 2, 14);
+    // Number
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 7px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(gc.num, 0, 2);
     ctx.restore();
   }
 }
