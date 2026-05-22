@@ -246,7 +246,7 @@ const startIdx = 120;
 const stHeading = Math.atan2(track[startIdx].tx, -track[startIdx].ty);
 const stX = track[startIdx].x, stY = track[startIdx].y;
 const stNX = track[startIdx].nx * 28, stNY = track[startIdx].ny * 28;
-const stBX = -Math.sin(stHeading) * 42, stBY = Math.cos(stHeading) * 42; // backward offset
+const stBX = -Math.sin(stHeading) * 126, stBY = Math.cos(stHeading) * 126; // backward offset (half-car gap)
 
 // ============================================================
 // CARS
@@ -584,6 +584,15 @@ function startCountdown() {
   race.phase = 'COUNTDOWN';
   race.lightsOn = 0; race.countTimer = 0; race.countStep = 0;
   race.elapsedTime = 0; race.winner = null;
+  // Recenter camera on grid
+  if (focusTarget) { cam.x = focusTarget.x - W/(2*ZOOM); cam.y = focusTarget.y - H/(2*ZOOM); }
+  else {
+    const cars = getActiveCars();
+    let mx = 0, my = 0;
+    for (const c of cars) { mx += c.x; my += c.y; }
+    mx /= cars.length; my /= cars.length;
+    cam.x = mx - W/(2*ZOOM); cam.y = my - H/(2*ZOOM);
+  }
 }
 
 function updateCountdown(dt) {
@@ -741,7 +750,7 @@ function drawTrack() {
   }
 
   // Start grid — miniature cars
-  const gL = 28, gGap = 30;
+  const gL = 28, gGap = 126;
   const bx = -Math.sin(stHeading), by = Math.cos(stHeading);
   const gridPositions = [
     { x: stX - track[startIdx].nx * gL, y: stY - track[startIdx].ny * gL },
