@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>F1 Silverstone — 人机对战</title>
+<title>F1 Silverstone — v2 双人对战</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{overflow:hidden;background:#111;font-family:'Courier New',monospace;display:flex;justify-content:center;align-items:center;height:100vh;user-select:none}
@@ -22,10 +22,14 @@ canvas{display:block}
 #btnStart:hover{background:rgba(50,255,50,0.2);box-shadow:0 0 14px rgba(50,255,50,0.12)}
 #btnDifficulty{color:#88ccff;border-color:#4488cc;min-width:72px}
 #btnDifficulty:hover{background:rgba(50,100,200,0.2)}
-#btnCamFocus{color:#ffaa44;border-color:#cc8833;min-width:90px}
+#btnCamFocus{color:#ffaa44;border-color:#cc8833;min-width:80px}
 #btnCamFocus:hover{background:rgba(200,136,50,0.2)}
 #btnLaps{color:#aa66ff;border-color:#8844cc;min-width:72px}
 #btnLaps:hover{background:rgba(136,68,204,0.2)}
+#btnMode{color:#66ffaa;border-color:#44cc88;min-width:72px}
+#btnMode:hover{background:rgba(50,200,100,0.2)}
+#btnAI{color:#ff66aa;border-color:#cc4488;min-width:72px}
+#btnAI:hover{background:rgba(200,50,100,0.2)}
 </style>
 </head>
 <body>
@@ -37,13 +41,15 @@ canvas{display:block}
     <button class="ctrl-btn" id="btnStop">■ 停止</button>
     <button class="ctrl-btn" id="btnReset">↺ 重置</button>
     <button class="ctrl-btn" id="btnDifficulty">中等</button>
-    <button class="ctrl-btn" id="btnCamFocus">焦点: 双车</button>
+    <button class="ctrl-btn" id="btnMode">单人</button>
+    <button class="ctrl-btn" id="btnAI">AI: 1</button>
+    <button class="ctrl-btn" id="btnCamFocus">焦点: 全部</button>
     <button class="ctrl-btn" id="btnLaps">圈数: 5</button>
   </div>
 </div>
 <script>
 // ============================================================
-// F1 Silverstone — 人机对战
+// F1 Silverstone — v2 双人/多人对战
 // ============================================================
 
 // ---------- canvas ----------
@@ -90,16 +96,32 @@ const DIFFICULTY = {
   HARD:       { label: '困难',   speedMult: 1.05, errorScale: 0.18, brakeFactor: 0.90, accelFactor: 1.05 },
   SUPER_HARD: { label: '超级困难', speedMult: 1.18, errorScale: 0.05, brakeFactor: 1.0,  accelFactor: 1.15 },
   HELL:       { label: '地狱级',  speedMult: 1.32, errorScale: 0.01, brakeFactor: 1.0,  accelFactor: 1.25 },
+  BOSS:       { label: 'BOSS',   speedMult: 1.45, errorScale: 0.001, brakeFactor: 1.0,  accelFactor: 1.35 },
 };
 let currentDifficulty = DIFFICULTY.MEDIUM;
 
+// ============================================================
+// GAME SETTINGS
+// ============================================================
+const gameSettings = {
+  mode: 'single', // 'single' | 'dual'
+  aiCount: 1,     // 0 | 1 | 2
+};
+
+function getActiveCars() {
+  const cars = [p1];
+  if (gameSettings.mode === 'dual') cars.push(p2);
+  if (gameSettings.aiCount >= 1) cars.push(a1);
+  if (gameSettings.aiCount >= 2) cars.push(a2);
+  return cars;
+}
+
 // Camera focus modes
 const CAM_MODES = [
-  { label: '玩家', wP: 1.0, wA: 0.0 },
-  { label: 'AI',   wP: 0.0, wA: 1.0 },
-  { label: '双车', wP: 0.65, wA: 0.35 },
+  { label: '玩家1' },
+  { label: '全部' },
 ];
-let camModeIdx = 2;
+let camModeIdx = 1;
 
 // Lap count options
 const LAP_OPTIONS = [3, 5, 8, 10];
@@ -107,7 +129,7 @@ let lapOptIdx = 1;
 let raceLaps = LAP_OPTIONS[lapOptIdx];
 
 // ============================================================
-// TRACK — natural circuit with varied corners & 180° hairpin
+// TRACK
 // ============================================================
 const waypoints = [
   // === PIT STRAIGHT / START-FINISH (22) — going RIGHT at y=3500 ===
@@ -208,19 +230,32 @@ const startIdx = 120;
 const stHeading = Math.atan2(track[startIdx].tx, -track[startIdx].ty);
 const stX = track[startIdx].x, stY = track[startIdx].y;
 const stNX = track[startIdx].nx * 28, stNY = track[startIdx].ny * 28;
+const stBX = -Math.sin(stHeading) * 30, stBY = Math.cos(stHeading) * 30; // backward offset
 
 // ============================================================
 // CARS
 // ============================================================
-const player = {
-  x: 0, y: 0, speed: 0, heading: 0, lapCount: 0, lastSector: -1, onTrack: true,
-  color: '#cc0000', accent: '#e6b800', num: '16', blocked: false,
-  lapCooldown: 0,
+const p1 = {
+  x: 0, y: 0, speed: 0, heading: 0, lapCount: 0, lastSector: -1, onTrack: true, blocked: false,
+  color: '#cc0000', accent: '#e6b800', num: '16', lapCooldown: 0, lapTime: 0, lapStartTime: 0,
+  keys: { up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight' },
 };
 
-const ai = {
-  x: 0, y: 0, speed: 0, heading: 0, lapCount: 0, lastSector: -1,
-  color: '#00d2be', accent: '#00a0cc', num: '44', blocked: false,
+const p2 = {
+  x: 0, y: 0, speed: 0, heading: 0, lapCount: 0, lastSector: -1, onTrack: true, blocked: false,
+  color: '#0055ff', accent: '#ffffff', num: '01', lapCooldown: 0, lapTime: 0, lapStartTime: 0,
+  keys: { up: 'w', down: 's', left: 'a', right: 'd' },
+};
+
+const a1 = {
+  x: 0, y: 0, speed: 0, heading: 0, lapCount: 0, lastSector: -1, onTrack: true, blocked: false,
+  color: '#00d2be', accent: '#00a0cc', num: '44', lapCooldown: 0, lapTime: 0, lapStartTime: 0,
+  errDrift: 0, errTimer: 0, trackIdx: 0,
+};
+
+const a2 = {
+  x: 0, y: 0, speed: 0, heading: 0, lapCount: 0, lastSector: -1, onTrack: true, blocked: false,
+  color: '#ff8800', accent: '#ffcc00', num: '77', lapCooldown: 0, lapTime: 0, lapStartTime: 0,
   errDrift: 0, errTimer: 0, trackIdx: 0,
 };
 
@@ -233,22 +268,31 @@ const race = {
   countTimer: 0,
   countStep: 0,
   elapsedTime: 0,
-  playerLapTime: 0,
-  lapStartTime: 0,
+  winner: null,
 };
 
 // ============================================================
 // INIT
 // ============================================================
 function initPositions() {
-  player.x = stX - stNX; player.y = stY - stNY;
-  player.heading = stHeading; player.speed = 0;
-  player.lapCount = 0; player.lastSector = -1; player.onTrack = true; player.blocked = true; player.lapCooldown = 0;
+  // Grid layout: 2 columns (left/right), 2 rows (front/back)
+  const grid = [
+    { x: stX - stNX, y: stY - stNY },                              // row 0 left
+    { x: stX + stNX, y: stY + stNY },                              // row 0 right
+    { x: stX - stNX + stBX, y: stY - stNY + stBY },                 // row 1 left
+    { x: stX + stNX + stBX, y: stY + stNY + stBY },                 // row 1 right
+  ];
 
-  ai.x = stX + stNX; ai.y = stY + stNY;
-  ai.heading = stHeading; ai.speed = 0;
-  ai.lapCount = 0; ai.lastSector = -1; ai.blocked = true;
-  ai.errDrift = 0; ai.errTimer = 0; ai.trackIdx = startIdx;
+  const cars = getActiveCars();
+  for (let i = 0; i < cars.length; i++) {
+    const c = cars[i];
+    c.x = grid[i].x; c.y = grid[i].y;
+    c.heading = stHeading; c.speed = 0;
+    c.lapCount = 0; c.lastSector = -1; c.blocked = true;
+    c.lapCooldown = 0; c.lapTime = 0; c.lapStartTime = 0;
+    c.onTrack = true;
+    if (c.trackIdx !== undefined) { c.trackIdx = startIdx; c.errDrift = 0; c.errTimer = 0; }
+  }
 
   tireMarks.length = 0; sparks.length = 0;
 }
@@ -261,8 +305,10 @@ initPositions();
 const cam = { x: 0, y: 0 };
 const ZOOM = 0.85;
 (function initCam() {
-  const mode = CAM_MODES[camModeIdx];
-  const mx = player.x * mode.wP + ai.x * mode.wA, my = player.y * mode.wP + ai.y * mode.wA;
+  const cars = getActiveCars();
+  let mx = 0, my = 0;
+  for (const c of cars) { mx += c.x; my += c.y; }
+  mx /= cars.length; my /= cars.length;
   cam.x = mx - W / (2 * ZOOM); cam.y = my - H / (2 * ZOOM);
 })();
 
@@ -278,134 +324,134 @@ function nearestTrackPoint(x, y) {
 }
 function isOnTrack(x, y) { return nearestTrackPoint(x, y).dist < CFG.trackWidth * 0.55; }
 
+function getCarProgress(car) {
+  const n = nearestTrackPoint(car.x, car.y);
+  return car.lapCount * totalLen + n.point.dist;
+}
+
 // ============================================================
 // PLAYER UPDATE
 // ============================================================
-function updatePlayer(dt) {
-  if (race.phase === 'FINISHED') return;
+function updatePlayer(car, dt) {
+  if (car.blocked || race.phase === 'FINISHED') return;
   dt = Math.min(dt, 0.05);
-  const keys = window.__keys || {};
-  const sr = Math.abs(player.speed) / CFG.maxSpeed;
+  const keyState = car === p1 ? window.__k1 : window.__k2;
+  const km = car.keys;
+  const sr = Math.abs(car.speed) / CFG.maxSpeed;
 
-  if (!player.blocked) {
-    if (keys.ArrowUp) {
-      if (player.speed < 0) player.speed += CFG.brake * dt;
-      else player.speed = Math.min(player.speed + CFG.accel * dt, CFG.maxSpeed);
+  if (!car.blocked) {
+    if (keyState[km.up]) {
+      if (car.speed < 0) car.speed += CFG.brake * dt;
+      else car.speed = Math.min(car.speed + CFG.accel * dt, CFG.maxSpeed);
     }
-    if (keys.ArrowDown) {
-      if (player.speed > 0) player.speed = Math.max(player.speed - CFG.brake * dt, 0);
-      else player.speed -= CFG.accel * 0.4 * dt;
+    if (keyState[km.down]) {
+      if (car.speed > 0) car.speed = Math.max(car.speed - CFG.brake * dt, 0);
+      else car.speed -= CFG.accel * 0.4 * dt;
     }
   }
 
   // Drag
-  if (player.speed > 0) { player.speed -= CFG.drag * sr * dt; if (player.speed < 0) player.speed = 0; }
-  else if (player.speed < 0) { player.speed += CFG.drag * 0.3 * dt; if (player.speed > 0) player.speed = 0; }
+  if (car.speed > 0) { car.speed -= CFG.drag * sr * dt; if (car.speed < 0) car.speed = 0; }
+  else if (car.speed < 0) { car.speed += CFG.drag * 0.3 * dt; if (car.speed > 0) car.speed = 0; }
 
   // Steering
   const turn = CFG.turnLow + (CFG.turnHigh - CFG.turnLow) * Math.min(sr, 1);
-  if (keys.ArrowLeft) player.heading -= turn * dt;
-  if (keys.ArrowRight) player.heading += turn * dt;
+  if (keyState[km.left]) car.heading -= turn * dt;
+  if (keyState[km.right]) car.heading += turn * dt;
 
   // Off-track
-  player.onTrack = isOnTrack(player.x, player.y);
-  if (!player.onTrack) { player.speed -= CFG.offTrackDrag * dt; if (player.speed < 0) player.speed = 0; }
+  car.onTrack = isOnTrack(car.x, car.y);
+  if (!car.onTrack) { car.speed -= CFG.offTrackDrag * dt; if (car.speed < 0) car.speed = 0; }
 
-  // Tire marks
-  if ((keys.ArrowDown && player.speed > 80) || ((keys.ArrowLeft || keys.ArrowRight) && player.speed > 120))
-    addTireMark(player.x, player.y);
+  // Tire marks (player1 only)
+  if (car === p1 && ((keyState[km.down] && car.speed > 80) || ((keyState[km.left] || keyState[km.right]) && car.speed > 120)))
+    addTireMark(car.x, car.y);
 
   // Move
-  player.x += Math.sin(player.heading) * player.speed * dt;
-  player.y -= Math.cos(player.heading) * player.speed * dt;
+  car.x += Math.sin(car.heading) * car.speed * dt;
+  car.y -= Math.cos(car.heading) * car.speed * dt;
 
   // Lap cooldown decay
-  if (player.lapCooldown > 0) player.lapCooldown -= dt;
+  if (car.lapCooldown > 0) car.lapCooldown -= dt;
 
   // Sector-based lap detection
-  const n = nearestTrackPoint(player.x, player.y);
+  const n = nearestTrackPoint(car.x, car.y);
   const sector = Math.floor((n.idx / track.length) * 10);
-  if (sector !== player.lastSector) {
-    if (sector === 0 && player.lastSector === 9 && player.speed > 30 && player.lapCooldown <= 0) {
-      player.lapCount++;
-      player.lapCooldown = 1.5;
+  if (sector !== car.lastSector) {
+    if (sector === 0 && car.lastSector === 9 && car.speed > 30 && car.lapCooldown <= 0) {
+      car.lapCount++;
+      car.lapCooldown = 1.5;
       if (race.phase === 'RACING') {
-        race.playerLapTime = race.elapsedTime - race.lapStartTime;
-        race.lapStartTime = race.elapsedTime;
-      }
-      // Check race finish
-      if (player.lapCount >= raceLaps && race.phase === 'RACING') {
-        race.phase = 'FINISHED';
-        player.blocked = true;
-        ai.blocked = true;
+        car.lapTime = race.elapsedTime - car.lapStartTime;
+        car.lapStartTime = race.elapsedTime;
       }
     }
-    player.lastSector = sector;
+    car.lastSector = sector;
   }
 }
 
 // ============================================================
 // AI UPDATE
 // ============================================================
-function updateAI(dt) {
-  if (ai.blocked || race.phase === 'FINISHED') return;
+function updateAI(car, dt) {
+  if (car.blocked || race.phase === 'FINISHED') return;
   dt = Math.min(dt, 0.05);
   const diff = currentDifficulty;
-  const n = nearestTrackPoint(ai.x, ai.y);
+  const n = nearestTrackPoint(car.x, car.y);
 
   // === Track position tracking (monotonic forward) ===
-  let idxDiff = n.idx - ai.trackIdx;
+  let idxDiff = n.idx - car.trackIdx;
   if (idxDiff < -track.length / 2) idxDiff += track.length;
   if (idxDiff > 0 && idxDiff < track.length / 3) {
-    ai.trackIdx = n.idx;
+    car.trackIdx = n.idx;
   }
 
   // === Off-track recovery ===
   if (n.dist > CFG.trackWidth * 0.5) {
-    const target = track[ai.trackIdx];
-    const recoverAngle = Math.atan2(target.x - ai.x, -(target.y - ai.y));
-    let err = recoverAngle - ai.heading;
+    const target = track[car.trackIdx];
+    const recoverAngle = Math.atan2(target.x - car.x, -(target.y - car.y));
+    let err = recoverAngle - car.heading;
     while (err > Math.PI) err -= 2 * Math.PI;
     while (err < -Math.PI) err += 2 * Math.PI;
-    ai.heading += Math.sign(err) * Math.min(Math.abs(err), 3.5 * dt);
-    ai.speed = Math.max(ai.speed - CFG.brake * dt, 30);
-    ai.x += Math.sin(ai.heading) * ai.speed * dt;
-    ai.y -= Math.cos(ai.heading) * ai.speed * dt;
-    const sector = Math.floor((ai.trackIdx / track.length) * 10);
-    if (sector !== ai.lastSector) {
-      if (sector === 0 && ai.lastSector === 9 && ai.speed > 30) ai.lapCount++;
-      ai.lastSector = sector;
+    car.heading += Math.sign(err) * Math.min(Math.abs(err), 3.5 * dt);
+    car.speed = Math.max(car.speed - CFG.brake * dt, 30);
+    car.x += Math.sin(car.heading) * car.speed * dt;
+    car.y -= Math.cos(car.heading) * car.speed * dt;
+    const sector = Math.floor((car.trackIdx / track.length) * 10);
+    if (sector !== car.lastSector) {
+      if (sector === 0 && car.lastSector === 9 && car.speed > 30) car.lapCount++;
+      car.lastSector = sector;
     }
     return;
   }
 
   // === Look-ahead (further for higher speed) ===
-  const lookSteps = 28 + Math.floor((ai.speed / CFG.maxSpeed) * 50);
-  const tIdx = (ai.trackIdx + Math.min(lookSteps, track.length - 1)) % track.length;
+  const lookSteps = 28 + Math.floor((car.speed / CFG.maxSpeed) * 50);
+  const tIdx = (car.trackIdx + Math.min(lookSteps, track.length - 1)) % track.length;
   const target = track[tIdx];
 
-  const dx = target.x - ai.x, dy = target.y - ai.y;
+  const dx = target.x - car.x, dy = target.y - car.y;
   const targetAngle = Math.atan2(dx, -dy);
-  let headingErr = targetAngle - ai.heading;
+  let headingErr = targetAngle - car.heading;
   while (headingErr > Math.PI) headingErr -= 2 * Math.PI;
   while (headingErr < -Math.PI) headingErr += 2 * Math.PI;
   const errAbs = Math.abs(headingErr);
 
-  // === Steering with minimal error on high difficulties ===
-  ai.errTimer -= dt;
-  if (ai.errTimer <= 0) { ai.errDrift = (Math.random() - 0.5) * 0.10 * diff.errorScale; ai.errTimer = 0.5 + Math.random() * 0.6; }
+  // === Steering with minimal error ===
+  car.errTimer -= dt;
+  if (car.errTimer <= 0) { car.errDrift = (Math.random() - 0.5) * 0.10 * diff.errorScale; car.errTimer = 0.5 + Math.random() * 0.6; }
 
   const steerGain = errAbs > Math.PI / 2 ? 1.6 : 1.0;
-  ai.heading += Math.sign(headingErr + ai.errDrift) * Math.min(Math.abs(headingErr + ai.errDrift), 3.0 * dt) * steerGain;
+  car.heading += Math.sign(headingErr + car.errDrift) * Math.min(Math.abs(headingErr + car.errDrift), 3.0 * dt) * steerGain;
 
   // === Curvature look-ahead ===
-  const ca1 = (ai.trackIdx + 30) % track.length, ca2 = (ai.trackIdx + 60) % track.length;
+  const ca1 = (car.trackIdx + 30) % track.length, ca2 = (car.trackIdx + 60) % track.length;
   let curv = Math.abs(Math.atan2(track[ca2].ty, track[ca2].tx) - Math.atan2(track[ca1].ty, track[ca1].tx));
   if (curv > Math.PI) curv = 2 * Math.PI - curv;
 
   // === Speed selection — fast on straights, minimal braking ===
   let base;
-  if (errAbs < 0.04 && curv < 0.02) base = CFG.maxSpeed;             // full speed on straights
+  if (errAbs < 0.04 && curv < 0.02) base = CFG.maxSpeed;
   else if (errAbs < 0.10 || curv < 0.05) base = CFG.maxSpeed * 0.94;
   else if (errAbs < 0.20 || curv < 0.10) base = CFG.maxSpeed * 0.82;
   else if (errAbs < 0.35 || curv < 0.20) base = CFG.maxSpeed * 0.65;
@@ -418,49 +464,51 @@ function updateAI(dt) {
   let targetSpeed = base * diff.speedMult;
   if (diff.speedMult > 1.0) targetSpeed = Math.min(targetSpeed, CFG.maxSpeed * 1.1);
 
-  const spdErr = targetSpeed - ai.speed;
-  if (spdErr > 0) ai.speed = Math.min(ai.speed + spdErr, ai.speed + CFG.accel * diff.accelFactor * dt);
-  else ai.speed = Math.max(ai.speed - Math.min(-spdErr, CFG.brake * diff.brakeFactor * dt), 0);
+  const spdErr = targetSpeed - car.speed;
+  if (spdErr > 0) car.speed = Math.min(car.speed + spdErr, car.speed + CFG.accel * diff.accelFactor * dt);
+  else car.speed = Math.max(car.speed - Math.min(-spdErr, CFG.brake * diff.brakeFactor * dt), 0);
 
-  ai.speed -= CFG.drag * (ai.speed / CFG.maxSpeed) * dt;
-  if (ai.speed < 0) ai.speed = 0;
-  if (ai.speed > CFG.maxSpeed) ai.speed = CFG.maxSpeed;
+  car.speed -= CFG.drag * (car.speed / CFG.maxSpeed) * dt;
+  if (car.speed < 0) car.speed = 0;
+  if (car.speed > CFG.maxSpeed) car.speed = CFG.maxSpeed;
 
-  ai.x += Math.sin(ai.heading) * ai.speed * dt;
-  ai.y -= Math.cos(ai.heading) * ai.speed * dt;
+  car.x += Math.sin(car.heading) * car.speed * dt;
+  car.y -= Math.cos(car.heading) * car.speed * dt;
 
   // Keep on track (stronger pull)
   if (n.dist > CFG.trackWidth * 0.35) {
     const pull = (n.dist - CFG.trackWidth * 0.35) * dt * 4;
-    ai.x += track[n.idx].nx * pull; ai.y += track[n.idx].ny * pull;
+    car.x += track[n.idx].nx * pull; car.y += track[n.idx].ny * pull;
   }
 
   // Sector-based lap detection
-  const sector = Math.floor((ai.trackIdx / track.length) * 10);
-  if (sector !== ai.lastSector) {
-    if (sector === 0 && ai.lastSector === 9 && ai.speed > 30) ai.lapCount++;
-    ai.lastSector = sector;
+  const sector = Math.floor((car.trackIdx / track.length) * 10);
+  if (sector !== car.lastSector) {
+    if (sector === 0 && car.lastSector === 9 && car.speed > 30) car.lapCount++;
+    car.lastSector = sector;
   }
 }
 
 // ============================================================
 // COLLISION
 // ============================================================
-function checkCollision() {
-  const dx = player.x - ai.x, dy = player.y - ai.y, dist = Math.sqrt(dx * dx + dy * dy);
-  if (dist < 38 && dist > 0.01) {
-    const nx = dx / dist, ny = dy / dist, overlap = (38 - dist) * 0.6;
-    player.x += nx * overlap; player.y += ny * overlap;
-    ai.x -= nx * overlap; ai.y -= ny * overlap;
-
-    const relV = (player.speed - ai.speed) * 0.12;
-    player.speed -= relV; if (player.speed < 0) player.speed = 0;
-    ai.speed += relV * 0.6; if (ai.speed < 0) ai.speed = 0;
-
-    emitSparks((player.x + ai.x) / 2, (player.y + ai.y) / 2, 12);
-    return true;
+function checkCollisions() {
+  const cars = getActiveCars();
+  for (let i = 0; i < cars.length; i++) {
+    for (let j = i + 1; j < cars.length; j++) {
+      const a = cars[i], b = cars[j];
+      const dx = a.x - b.x, dy = a.y - b.y, dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < 38 && dist > 0.01) {
+        const nx = dx / dist, ny = dy / dist, overlap = (38 - dist) * 0.6;
+        a.x += nx * overlap; a.y += ny * overlap;
+        b.x -= nx * overlap; b.y -= ny * overlap;
+        const relV = (a.speed - b.speed) * 0.12;
+        a.speed -= relV; if (a.speed < 0) a.speed = 0;
+        b.speed += relV * 0.6; if (b.speed < 0) b.speed = 0;
+        emitSparks((a.x + b.x) / 2, (a.y + b.y) / 2, 12);
+      }
+    }
   }
-  return false;
 }
 
 // ============================================================
@@ -471,7 +519,7 @@ function startCountdown() {
   initPositions();
   race.phase = 'COUNTDOWN';
   race.lightsOn = 0; race.countTimer = 0; race.countStep = 0;
-  race.elapsedTime = 0; race.playerLapTime = 0; race.lapStartTime = 0;
+  race.elapsedTime = 0; race.winner = null;
 }
 
 function updateCountdown(dt) {
@@ -484,10 +532,10 @@ function updateCountdown(dt) {
     if (race.countTimer >= 1.2) {
       race.countStep = 6; race.lightsOn = 0;
       race.phase = 'RACING';
-      player.blocked = false;
-      ai.blocked = false;
-      race.lapStartTime = 0;
+      for (const c of getActiveCars()) c.blocked = false;
       race.countTimer = 0;
+      // Reset lap timers
+      for (const c of getActiveCars()) c.lapStartTime = 0;
     }
   }
 }
@@ -587,7 +635,7 @@ function drawTrack() {
   }
   ctx.setLineDash([]);
 
-  // --- Curbing — red/white stripe along inside edge of corners ---
+  // Curbing
   const CURB_DEPTH = 26;
   const CURB_STRIPE = 3;
   for (let i = 0; i < track.length; i++) {
@@ -620,13 +668,17 @@ function drawTrack() {
   }
 
   // Start grid position markers
-  const gOff = 28;
-  const gNx = track[startIdx].nx * gOff, gNy = track[startIdx].ny * gOff;
-  const slots = [
-    { x: stX - gNx, y: stY - gNy, num: '16', label: 'P1' },
-    { x: stX + gNx, y: stY + gNy, num: '44', label: 'P2' },
+  const gL = 28, gGap = 30;
+  const bx = -Math.sin(stHeading), by = Math.cos(stHeading);
+  const gridMarkers = [
+    { x: stX - track[startIdx].nx * gL, y: stY - track[startIdx].ny * gL, label: 'P1' },
+    { x: stX + track[startIdx].nx * gL, y: stY + track[startIdx].ny * gL, label: 'P2' },
+    { x: stX - track[startIdx].nx * gL + bx * gGap, y: stY - track[startIdx].ny * gL + by * gGap, label: 'P3' },
+    { x: stX + track[startIdx].nx * gL + bx * gGap, y: stY + track[startIdx].ny * gL + by * gGap, label: 'P4' },
   ];
-  for (const s of slots) {
+  const activeCars = getActiveCars();
+  for (let i = 0; i < activeCars.length; i++) {
+    const s = gridMarkers[i];
     ctx.save();
     ctx.translate(s.x, s.y);
     ctx.rotate(stHeading);
@@ -636,7 +688,7 @@ function drawTrack() {
     ctx.strokeRect(-22, -16, 44, 32);
     ctx.fillStyle = 'rgba(255,255,255,0.6)';
     ctx.font = 'bold 16px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText(s.num, 0, 0);
+    ctx.fillText(activeCars[i].num, 0, 0);
     ctx.fillStyle = 'rgba(255,255,255,0.35)';
     ctx.font = '9px "Courier New",monospace'; ctx.textBaseline = 'bottom';
     ctx.fillText(s.label, 0, -18);
@@ -722,24 +774,52 @@ function fmtLap(t) {
   return `${String(s).padStart(2,'0')}.${String(ms).padStart(3,'0')}`;
 }
 
+function getCarLabel(car) {
+  if (car === p1) return '玩家1';
+  if (car === p2) return '玩家2';
+  if (car === a1) return 'AI #44';
+  if (car === a2) return 'AI #77';
+  return '';
+}
+
+function drawCarPanel(x, y, w, h, car, accentColor, title) {
+  if (!car) return;
+  roundRect(ctx, x, y, w, h, 6); ctx.fillStyle = 'rgba(0,0,0,0.8)'; ctx.fill();
+  ctx.fillStyle = accentColor; ctx.fillRect(x, y, 4, h);
+
+  ctx.fillStyle = '#aaa'; ctx.font = '10px "Courier New",monospace'; ctx.textAlign = 'left';
+  ctx.fillText(title || getCarLabel(car), x+14, y+16);
+
+  const spd = Math.round(Math.abs(car.speed * 0.85));
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 24px "Courier New",monospace'; ctx.textAlign = 'right';
+  ctx.fillText(spd.toString(), x+w-16, y+46);
+  ctx.fillStyle = '#888'; ctx.font = '11px "Courier New",monospace'; ctx.textAlign = 'left';
+  ctx.fillText('km/h', x+w-60, y+46);
+
+  ctx.fillStyle = '#eee'; ctx.font = 'bold 13px "Courier New",monospace'; ctx.textAlign = 'left';
+  ctx.fillText(`LAP ${car.lapCount+1}/${raceLaps}`, x+14, y+74);
+}
+
 function drawHUD() {
   const px = 16, py = 16, pw = 210;
+  const activeCars = getActiveCars();
 
   // ---- Main left panel ----
   roundRect(ctx, px, py, pw, 200, 6); ctx.fillStyle = 'rgba(0,0,0,0.82)'; ctx.fill();
-  ctx.fillStyle = '#cc0000'; ctx.fillRect(px, py, 4, 200);
+  ctx.fillStyle = p1.color; ctx.fillRect(px, py, 4, 200);
 
-  // Position ranking
-  const pProg = nearestTrackPoint(player.x, player.y).point.dist / totalLen + player.lapCount;
-  const aProg = nearestTrackPoint(ai.x, ai.y).point.dist / totalLen + ai.lapCount;
-  const rank = pProg >= aProg ? 1 : 2;
+  // Position ranking — sort by progress descending
+  const ranked = [...activeCars].sort((a, b) => getCarProgress(b) - getCarProgress(a));
+  const p1Rank = ranked.indexOf(p1) + 1;
 
   ctx.fillStyle = '#ffcc00'; ctx.font = 'bold 18px "Courier New",monospace'; ctx.textAlign = 'left';
-  ctx.fillText(`POSITION  P${rank}`, px+16, py+22);
-
-  const gap = Math.abs(pProg - aProg);
-  ctx.fillStyle = rank === 1 ? '#44ff44' : '#ff4444'; ctx.font = '11px "Courier New",monospace'; ctx.textAlign = 'right';
-  ctx.fillText(rank === 1 ? `+${gap.toFixed(3)}` : `-${gap.toFixed(3)}`, px+pw-12, py+22);
+  if (gameSettings.mode === 'dual' || gameSettings.aiCount > 0) {
+    ctx.fillText(`POSITION  P${p1Rank}`, px+16, py+22);
+    ctx.fillStyle = '#888'; ctx.font = '10px "Courier New",monospace'; ctx.textAlign = 'right';
+    ctx.fillText(`${ranked.length} 台`, px+pw-12, py+22);
+  } else {
+    ctx.fillText('PRACTICE', px+16, py+22);
+  }
 
   ctx.strokeStyle = 'rgba(255,255,255,0.1)'; ctx.lineWidth = 1;
   ctx.beginPath(); ctx.moveTo(px+12, py+32); ctx.lineTo(px+pw-12, py+32); ctx.stroke();
@@ -753,10 +833,10 @@ function drawHUD() {
   // Lap time
   ctx.fillText('LAP TIME', px+16, py+98);
   ctx.fillStyle = '#eee'; ctx.font = 'bold 18px "Courier New",monospace';
-  ctx.fillText(fmtLap(race.playerLapTime), px+16, py+120);
+  ctx.fillText(fmtLap(p1.lapTime), px+16, py+120);
 
   // Speed
-  const ds = Math.round(Math.abs(player.speed * 0.85));
+  const ds = Math.round(Math.abs(p1.speed * 0.85));
   const gs = ds > 310 ? 7 : ds > 270 ? 6 : ds > 210 ? 5 : ds > 150 ? 4 : ds > 100 ? 3 : ds > 60 ? 2 : 1;
 
   ctx.fillStyle = '#888'; ctx.font = '10px "Courier New",monospace';
@@ -769,61 +849,94 @@ function drawHUD() {
   // Gear & lap
   ctx.fillStyle = '#fff'; ctx.font = 'bold 14px "Courier New",monospace';
   ctx.textAlign = 'left'; ctx.fillText(`GEAR ${gs}`, px+16, py+175);
-  ctx.textAlign = 'right'; ctx.fillText(`LAP ${player.lapCount+1}/${raceLaps}`, px+pw-16, py+175);
+  ctx.textAlign = 'right'; ctx.fillText(`LAP ${p1.lapCount+1}/${raceLaps}`, px+pw-16, py+175);
 
-  // ---- AI panel (top right) ----
-  const ax = W - 185;
-  roundRect(ctx, ax, py, 169, 92, 6); ctx.fillStyle = 'rgba(0,0,0,0.8)'; ctx.fill();
-  ctx.fillStyle = '#00d2be'; ctx.fillRect(ax, py, 4, 92);
+  // ---- Right side panels ----
+  rx = W - 178;
+  ry = py;
+  rpw = 162;
 
-  ctx.fillStyle = '#aaa'; ctx.font = '10px "Courier New",monospace'; ctx.textAlign = 'left';
-  ctx.fillText('AI  #44', ax+14, py+16);
+  // P2 panel
+  if (gameSettings.mode === 'dual') {
+    drawCarPanel(rx, ry, rpw, 92, p2, p2.color, '玩家2  #01');
+    ry += 100;
+  }
 
-  const aiSpd = Math.round(Math.abs(ai.speed * 0.85));
-  ctx.fillStyle = '#fff'; ctx.font = 'bold 24px "Courier New",monospace'; ctx.textAlign = 'right';
-  ctx.fillText(aiSpd.toString(), ax+120, py+46);
-  ctx.fillStyle = '#888'; ctx.font = '11px "Courier New",monospace'; ctx.textAlign = 'left';
-  ctx.fillText('km/h', ax+105, py+46);
+  // AI panels
+  if (gameSettings.aiCount >= 1) {
+    drawCarPanel(rx, ry, rpw, 92, a1, a1.color, 'AI  #44');
+    ry += 100;
+  }
+  if (gameSettings.aiCount >= 2) {
+    if (ry + 92 > H - 40) { rx -= 170; ry = py; } // wrap to next column
+    drawCarPanel(rx, ry, rpw, 92, a2, a2.color, 'AI  #77');
+    ry += 100;
+  }
 
-  ctx.fillStyle = '#eee'; ctx.font = 'bold 13px "Courier New",monospace'; ctx.textAlign = 'left';
-  ctx.fillText(`LAP ${ai.lapCount+1}/${raceLaps}`, ax+14, py+74);
-
+  // Bottom info bar
+  const infoY = Math.max(ry, H - 200);
   // Difficulty indicator
-  roundRect(ctx, W-120, py+102, 104, 26, 4); ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fill();
+  roundRect(ctx, W-120, infoY, 104, 26, 4); ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fill();
   ctx.fillStyle = '#88ccff'; ctx.font = 'bold 11px "Courier New",monospace'; ctx.textAlign = 'center';
-  ctx.fillText(`难度: ${currentDifficulty.label}`, W-68, py+119);
+  ctx.fillText(`难度: ${currentDifficulty.label}`, W-68, infoY+18);
 
   // Camera mode indicator
-  roundRect(ctx, W-120, py+136, 104, 26, 4); ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fill();
+  roundRect(ctx, W-120, infoY+32, 104, 26, 4); ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fill();
   ctx.fillStyle = '#ffaa44'; ctx.font = 'bold 11px "Courier New",monospace'; ctx.textAlign = 'center';
-  ctx.fillText(`焦点: ${CAM_MODES[camModeIdx].label}`, W-68, py+153);
+  ctx.fillText(`焦点: ${CAM_MODES[camModeIdx].label}`, W-68, infoY+50);
 
   // Controls hint
-  roundRect(ctx, W-175, H-165, 155, 72, 5); ctx.fillStyle = 'rgba(0,0,0,0.4)'; ctx.fill();
-  ctx.fillStyle = '#666'; ctx.font = '10px "Courier New",monospace'; ctx.textAlign = 'left';
-  ['↑ 加速','↓ 刹车','← → 转向'].forEach((t,i) => ctx.fillText(t, W-165, H-148+i*19));
+  const hintY = H - 165;
+  if (gameSettings.mode === 'single') {
+    roundRect(ctx, W-175, hintY, 155, 50, 5); ctx.fillStyle = 'rgba(0,0,0,0.4)'; ctx.fill();
+    ctx.fillStyle = '#666'; ctx.font = '10px "Courier New",monospace'; ctx.textAlign = 'left';
+    ['↑ 加速','↓ 刹车','← → 转向'].forEach((t,i) => ctx.fillText(t, W-165, hintY+18+i*19));
+  } else {
+    roundRect(ctx, W-175, hintY, 155, 90, 5); ctx.fillStyle = 'rgba(0,0,0,0.4)'; ctx.fill();
+    ctx.fillStyle = '#cc0000'; ctx.font = 'bold 10px "Courier New",monospace'; ctx.textAlign = 'left';
+    ctx.fillText('P1 方向键', W-165, hintY+16);
+    ctx.fillStyle = '#666'; ctx.font = '10px "Courier New",monospace';
+    ['↑ 加速','↓ 刹车','← → 转向'].forEach((t,i) => ctx.fillText(t, W-155, hintY+32+i*19));
+    ctx.fillStyle = '#0055ff'; ctx.font = 'bold 10px "Courier New",monospace';
+    ctx.fillText('P2 WASD', W-165, hintY+82);
+    ctx.fillStyle = '#666'; ctx.font = '10px "Courier New",monospace';
+    ['W 加速','S 刹车','A D 转向'].forEach((t,i) => ctx.fillText(t, W-155, hintY+98+i*19));
+  }
 
   // ---- Phase overlays ----
   if (race.phase === 'IDLE') {
     ctx.fillStyle = 'rgba(255,255,0,0.08)'; ctx.fillRect(0, 0, W, H);
     ctx.fillStyle = '#ffcc00'; ctx.font = 'bold 32px "Courier New",monospace'; ctx.textAlign = 'center';
     ctx.fillText('点击「开始比赛」', W/2, H/2 - 10);
+    const modeText = gameSettings.mode === 'dual' ? `双人模式  ·  ${gameSettings.aiCount} AI` : `${gameSettings.aiCount} AI`;
     ctx.fillStyle = '#888'; ctx.font = '14px "Courier New",monospace';
-    ctx.fillText(`五红灯倒计时后发车  ·  共 ${raceLaps} 圈`, W/2, H/2 + 30);
+    ctx.fillText(`${modeText}  ·  共 ${raceLaps} 圈`, W/2, H/2 + 30);
   }
 
   if (race.phase === 'FINISHED') {
     ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(0, 0, W, H);
-    const winner = player.lapCount >= ai.lapCount ? '玩家' : 'AI';
-    const wColor = player.lapCount >= ai.lapCount ? '#ffcc00' : '#00d2be';
+
+    // Determine winner
+    const winner = race.winner || ranked[0];
+    const wLabel = getCarLabel(winner);
+    const wColor = winner === p1 ? '#ffcc00' : winner === p2 ? '#66bbff' : winner === a1 ? '#00d2be' : '#ff8800';
+
     ctx.fillStyle = wColor; ctx.font = 'bold 40px "Courier New",monospace'; ctx.textAlign = 'center';
-    ctx.fillText(`${winner} 获胜！`, W/2, H/2 - 30);
-    ctx.fillStyle = '#fff'; ctx.font = 'bold 18px "Courier New",monospace';
-    ctx.fillText(`玩家 ${player.lapCount} 圈 vs AI ${ai.lapCount} 圈`, W/2, H/2 + 30);
+    ctx.fillText(`${wLabel} 获胜！`, W/2, H/2 - 50);
+
+    // Show ranking
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 16px "Courier New",monospace';
+    let rankText = '';
+    for (let i = 0; i < ranked.length; i++) {
+      const c = ranked[i];
+      rankText += `P${i+1} ${getCarLabel(c)} ${c.lapCount}圈${i < ranked.length - 1 ? '  ' : ''}`;
+    }
+    ctx.fillText(rankText, W/2, H/2);
+
     ctx.fillStyle = '#888'; ctx.font = '14px "Courier New",monospace';
-    ctx.fillText(`总用时 ${fmtTime(race.elapsedTime)}`, W/2, H/2 + 65);
+    ctx.fillText(`总用时 ${fmtTime(race.elapsedTime)}`, W/2, H/2 + 40);
     ctx.fillStyle = '#666'; ctx.font = '12px "Courier New",monospace';
-    ctx.fillText('点击「重置」重新开始', W/2, H/2 + 100);
+    ctx.fillText('点击「重置」重新开始', W/2, H/2 + 75);
   }
 }
 
@@ -840,15 +953,39 @@ function gameLoop(time) {
     updateCountdown(dt);
     if (race.phase === 'RACING') race.elapsedTime += dt;
 
-    updatePlayer(dt);
-    updateAI(dt);
-    if (race.phase === 'RACING') checkCollision();
+    // Update all players
+    updatePlayer(p1, dt);
+    if (gameSettings.mode === 'dual') updatePlayer(p2, dt);
+
+    // Update all AI
+    if (gameSettings.aiCount >= 1) updateAI(a1, dt);
+    if (gameSettings.aiCount >= 2) updateAI(a2, dt);
+
+    // Collisions
+    if (race.phase === 'RACING') checkCollisions();
     updateSparks(dt);
 
-    // Camera — weighted by focus mode
-    const mode = CAM_MODES[camModeIdx];
-    const mx = player.x * mode.wP + ai.x * mode.wA;
-    const my = player.y * mode.wP + ai.y * mode.wA;
+    // Check finish condition
+    if (race.phase === 'RACING') {
+      for (const c of getActiveCars()) {
+        if (c.lapCount >= raceLaps) {
+          race.phase = 'FINISHED';
+          race.winner = c;
+          for (const cc of getActiveCars()) cc.blocked = true;
+          break;
+        }
+      }
+    }
+
+    // Camera
+    const activeCars = getActiveCars();
+    let mx = 0, my = 0;
+    if (camModeIdx === 0) {
+      mx = p1.x; my = p1.y;
+    } else {
+      for (const c of activeCars) { mx += c.x; my += c.y; }
+      mx /= activeCars.length; my /= activeCars.length;
+    }
     const tx = mx - W / (2*ZOOM), ty = my - H / (2*ZOOM);
     cam.x += (tx - cam.x) * 0.09;
     cam.y += (ty - cam.y) * 0.09;
@@ -863,14 +1000,22 @@ function gameLoop(time) {
     drawTrack();
     drawSparksFx();
 
-    drawCar(ai.x, ai.y, ai.heading, ai);
-    drawCar(player.x, player.y, player.heading, player);
+    // Draw all active cars
+    for (const c of activeCars) drawCar(c.x, c.y, c.heading, c);
 
-    drawSpeedLines(player.x, player.y, player.heading, player.speed);
-    drawSpeedLines(ai.x, ai.y, ai.heading, ai.speed);
+    // Speed lines
+    drawSpeedLines(p1.x, p1.y, p1.heading, p1.speed);
+    if (gameSettings.mode === 'dual') drawSpeedLines(p2.x, p2.y, p2.heading, p2.speed);
+    if (gameSettings.aiCount >= 1) drawSpeedLines(a1.x, a1.y, a1.heading, a1.speed);
+    if (gameSettings.aiCount >= 2) drawSpeedLines(a2.x, a2.y, a2.heading, a2.speed);
 
-    if (!player.onTrack) {
+    // Off-track overlay for human players
+    if (!p1.onTrack) {
       ctx.fillStyle = 'rgba(255,80,0,0.06)';
+      ctx.fillRect(cam.x, cam.y, W/ZOOM, H/ZOOM);
+    }
+    if (gameSettings.mode === 'dual' && !p2.onTrack) {
+      ctx.fillStyle = 'rgba(0,80,255,0.06)';
       ctx.fillRect(cam.x, cam.y, W/ZOOM, H/ZOOM);
     }
 
@@ -889,33 +1034,67 @@ function gameLoop(time) {
 // ============================================================
 // CONTROLS
 // ============================================================
-window.__keys = {};
+window.__k1 = {}; // Player 1 — Arrow keys
+window.__k2 = {}; // Player 2 — WASD
 window.addEventListener('keydown', e => {
-  if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)) { e.preventDefault(); window.__keys[e.key] = true; }
+  if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)) { e.preventDefault(); window.__k1[e.key] = true; }
+  if (['w','W','a','A','s','S','d','D'].includes(e.key)) { e.preventDefault(); window.__k2[e.key.toLowerCase()] = true; }
 });
 window.addEventListener('keyup', e => {
-  if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)) { e.preventDefault(); window.__keys[e.key] = false; }
+  if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)) { e.preventDefault(); window.__k1[e.key] = false; }
+  if (['w','W','a','A','s','S','d','D'].includes(e.key)) { e.preventDefault(); window.__k2[e.key.toLowerCase()] = false; }
 });
 
 // ============================================================
 // BUTTONS
 // ============================================================
 document.getElementById('btnStart').addEventListener('click', () => { startCountdown(); });
-document.getElementById('btnStop').addEventListener('click', () => { player.speed = 0; });
+document.getElementById('btnStop').addEventListener('click', () => {
+  for (const c of getActiveCars()) c.speed = 0;
+});
 document.getElementById('btnReset').addEventListener('click', () => {
   initPositions();
-  race.phase = 'IDLE'; race.elapsedTime = 0; race.playerLapTime = 0; race.lapStartTime = 0;
+  race.phase = 'IDLE'; race.elapsedTime = 0; race.winner = null;
   race.lightsOn = 0; race.countTimer = 0; race.countStep = 0;
-  const mode = CAM_MODES[camModeIdx];
-  const mx = player.x * mode.wP + ai.x * mode.wA, my = player.y * mode.wP + ai.y * mode.wA;
+  const activeCars = getActiveCars();
+  let mx = 0, my = 0;
+  for (const c of activeCars) { mx += c.x; my += c.y; }
+  mx /= activeCars.length; my /= activeCars.length;
   cam.x = mx - W/(2*ZOOM); cam.y = my - H/(2*ZOOM);
 });
 
 document.getElementById('btnDifficulty').addEventListener('click', () => {
-  const order = [DIFFICULTY.EASY, DIFFICULTY.MEDIUM, DIFFICULTY.HARD, DIFFICULTY.SUPER_HARD, DIFFICULTY.HELL];
+  if (race.phase !== 'IDLE') return;
+  const order = [DIFFICULTY.EASY, DIFFICULTY.MEDIUM, DIFFICULTY.HARD, DIFFICULTY.SUPER_HARD, DIFFICULTY.HELL, DIFFICULTY.BOSS];
   let idx = order.indexOf(currentDifficulty);
   currentDifficulty = order[(idx + 1) % order.length];
   document.getElementById('btnDifficulty').textContent = currentDifficulty.label;
+});
+
+document.getElementById('btnMode').addEventListener('click', () => {
+  if (race.phase !== 'IDLE') return;
+  gameSettings.mode = gameSettings.mode === 'single' ? 'dual' : 'single';
+  document.getElementById('btnMode').textContent = gameSettings.mode === 'dual' ? '双人' : '单人';
+  initPositions();
+  race.phase = 'IDLE'; race.elapsedTime = 0; race.winner = null;
+  const activeCars = getActiveCars();
+  let mx = 0, my = 0;
+  for (const c of activeCars) { mx += c.x; my += c.y; }
+  mx /= activeCars.length; my /= activeCars.length;
+  cam.x = mx - W/(2*ZOOM); cam.y = my - H/(2*ZOOM);
+});
+
+document.getElementById('btnAI').addEventListener('click', () => {
+  if (race.phase !== 'IDLE') return;
+  gameSettings.aiCount = (gameSettings.aiCount + 1) % 3;
+  document.getElementById('btnAI').textContent = 'AI: ' + gameSettings.aiCount;
+  initPositions();
+  race.phase = 'IDLE'; race.elapsedTime = 0; race.winner = null;
+  const activeCars = getActiveCars();
+  let mx = 0, my = 0;
+  for (const c of activeCars) { mx += c.x; my += c.y; }
+  mx /= activeCars.length; my /= activeCars.length;
+  cam.x = mx - W/(2*ZOOM); cam.y = my - H/(2*ZOOM);
 });
 
 document.getElementById('btnCamFocus').addEventListener('click', () => {
