@@ -607,11 +607,11 @@ function updateCountdown(dt) {
 // ============================================================
 // DRAWING
 // ============================================================
-function drawCar(x, y, heading, c) {
+function drawCar(x, y, heading, c, scale) {
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(heading);
-  const s = 1;
+  const s = scale || 1;
 
   ctx.shadowColor = '#000'; ctx.shadowBlur = 5;
 
@@ -753,28 +753,7 @@ function drawTrack() {
   for (let i = 0; i < activeCars.length; i++) {
     const gc = activeCars[i];
     const gp = gridPositions[i];
-    ctx.save();
-    ctx.translate(gp.x, gp.y);
-    ctx.rotate(stHeading);
-    // Car body silhouette
-    ctx.fillStyle = gc.color;
-    ctx.beginPath();
-    ctx.moveTo(0, -16); ctx.quadraticCurveTo(4, -15, 7, -11);
-    ctx.lineTo(5, -4); ctx.quadraticCurveTo(4, -2, 3, 0);
-    ctx.lineTo(5, 6); ctx.quadraticCurveTo(8, 9, 8, 12);
-    ctx.lineTo(5, 16); ctx.lineTo(0, 17); ctx.lineTo(-5, 16);
-    ctx.lineTo(-8, 12); ctx.quadraticCurveTo(-8, 9, -5, 6);
-    ctx.lineTo(-3, 0); ctx.quadraticCurveTo(-4, -2, -5, -4);
-    ctx.lineTo(-7, -11); ctx.quadraticCurveTo(-4, -15, 0, -16);
-    ctx.closePath(); ctx.fill();
-    // Accent stripe
-    ctx.fillStyle = gc.accent;
-    ctx.fillRect(-1, -15, 2, 14);
-    // Number
-    ctx.fillStyle = '#fff';
-    ctx.font = 'bold 7px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText(gc.num, 0, 2);
-    ctx.restore();
+    drawCar(gp.x, gp.y, stHeading, gc, 0.45);
   }
 }
 
