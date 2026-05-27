@@ -225,10 +225,10 @@ track.forEach(p => p.totalLen = totalLen);
 let racingLine = [];
 let speedProfile = [];
 
-(function computeRacingLineAndProfile() {
+function computeRacingLineAndProfile() {
   const n = track.length;
   if (n === 0) return;
-  const maxOff = CFG.trackWidth * 0.45;
+  const maxOff = CFG.trackWidth * 0.40;
 
   // Step 1: Menger curvature on centerline (over 3-point window for smoothness)
   const curv = new Float64Array(n);
@@ -254,14 +254,15 @@ let speedProfile = [];
     curv[i] = cnt > 0 ? sum / cnt : 0;
   }
 
-  // Step 2: Generate racing line by shifting inside (string method approximation)
+  // Step 2: Generate racing line by shifting inside
   for (let i = 0; i < n; i++) {
     const off = -Math.sign(curv[i]) * Math.min(Math.abs(curv[i]) * 8000, maxOff);
     racingLine.push({ x: track[i].x + track[i].nx * off, y: track[i].y + track[i].ny * off });
   }
 
-  // Step 3: Gaussian smoothing (2 iterations to preserve apex shifts)
+  // Step 3: Gaussian smoothing with track-bound clamping (guarantees racing line stays on track)
   const gauss = [0.05, 0.25, 0.4, 0.25, 0.05];
+  const clampDist = CFG.trackWidth * 0.42;
   for (let iter = 0; iter < 2; iter++) {
     const copy = racingLine.map(p => ({ x: p.x, y: p.y }));
     for (let i = 0; i < n; i++) {
@@ -270,7 +271,15 @@ let speedProfile = [];
         const idx = (i + j + n) % n;
         sx += copy[idx].x * gauss[j+2]; sy += copy[idx].y * gauss[j+2];
       }
-      racingLine[i].x = sx; racingLine[i].y = sy;
+      // Clamp to stay within safe track bounds (prevents smoothing from pushing points off-track)
+      const dx = sx - track[i].x, dy = sy - track[i].y;
+      const dist = Math.sqrt(dx*dx + dy*dy);
+      if (dist > clampDist) {
+        racingLine[i].x = track[i].x + (dx/dist) * clampDist;
+        racingLine[i].y = track[i].y + (dy/dist) * clampDist;
+      } else {
+        racingLine[i].x = sx; racingLine[i].y = sy;
+      }
     }
   }
 
@@ -283,25 +292,25 @@ let speedProfile = [];
     else { racingLine[i].tx = track[i].tx; racingLine[i].ty = track[i].ty; racingLine[i].nx = track[i].nx; racingLine[i].ny = track[i].ny; }
   }
 
-  // Step 5: Speed profile on centerline using forward-backward min-time pass
-  const segLen = totalLen / n;
-  const latAccel = 500; // px/s² lateral grip limit
+  // Step 5: Speed profile on CENTERLINE using forward-backward min-time pass
+  const latAccel = 500;
 
   // Curvature-limited max speed on centerline
   const vCurv = [];
   for (let i = 0; i < n; i++) {
     const c = Math.abs(curv[i]);
-    vCurv.push(c > 0.00001 ? Math.min(Math.sqrt(latAccel / c), CFG.maxSpeed * 1.1) : CFG.maxSpeed * 1.1);
+    vCurv.push(c > 0.00001 ? Math.min(Math.sqrt(latAccel / c), 660) : 660);
   }
 
-  // Forward pass (acceleration-limited)
+  // Forward pass (acceleration-limited) using centerline segment lengths
   const vFwd = [vCurv[0]];
   for (let i = 1; i < n; i++) {
-    const vAccel = Math.sqrt(vFwd[i-1]*vFwd[i-1] + 2 * CFG.accel * 1.3 * segLen);
+    const seg = Math.sqrt((track[i].x-track[i-1].x)**2 + (track[i].y-track[i-1].y)**2);
+    const vAccel = Math.sqrt(vFwd[i-1]*vFwd[i-1] + 2 * CFG.accel * 1.3 * seg);
     vFwd.push(Math.min(vCurv[i], vAccel));
   }
 
-  // Backward pass (braking-limited) — ensures we can slow down for corners
+  // Backward pass (braking-limited)
   const vBwd = new Array(n).fill(0);
   vBwd[n-1] = vFwd[n-1];
   for (let i = n - 2; i >= 0; i--) {
@@ -317,7 +326,7 @@ let speedProfile = [];
     vBwd[n-1] = (vBwd[n-2] + vBwd[n-1] + vBwd[0]) / 3;
   }
   speedProfile = vBwd;
-})();
+}
 
 // ---------- track bounds for minimap ----------
 const trackBounds = (function() {
@@ -399,28 +408,28 @@ const p1 = {
   x: 0, y: 0, speed: 0, heading: 0, lapCount: 0, lastSector: -1, onTrack: true, blocked: false, braking: false,
   color: '#dc0000', accent: '#ffd700', num: '16', lapCooldown: 0, lapTime: 0, lapStartTime: 0,
   keys: { up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight' },
-  offTrackTimer: 0, _prevIdx: 0, _hasWrapped: false,
+  offTrackTimer: 0, _prevIdx: 0, _hasWrapped: false, slipstreamTimer: 0, slipStreamBoost: 0,
 };
 
 const p2 = {
   x: 0, y: 0, speed: 0, heading: 0, lapCount: 0, lastSector: -1, onTrack: true, blocked: false, braking: false,
   color: '#00d2be', accent: '#c0c0c0', num: '01', lapCooldown: 0, lapTime: 0, lapStartTime: 0,
   keys: { up: 'w', down: 's', left: 'a', right: 'd' },
-  offTrackTimer: 0, _prevIdx: 0, _hasWrapped: false,
+  offTrackTimer: 0, _prevIdx: 0, _hasWrapped: false, slipstreamTimer: 0, slipStreamBoost: 0,
 };
 
 const a1 = {
   x: 0, y: 0, speed: 0, heading: 0, lapCount: 0, lastSector: -1, onTrack: true, blocked: false, braking: false,
   color: '#1e3a5f', accent: '#ff1e00', num: '44', lapCooldown: 0, lapTime: 0, lapStartTime: 0,
-  errDrift: 0, errTimer: 0, trackIdx: 0, prevSpeed: 0,
-  offTrackTimer: 0, _prevIdx: 0, _hasWrapped: false,
+  errDrift: 0, errTimer: 0, trackIdx: 0, prevSpeed: 0, lineBias: 0,
+  offTrackTimer: 0, _prevIdx: 0, _hasWrapped: false, slipstreamTimer: 0, slipStreamBoost: 0,
 };
 
 const a2 = {
   x: 0, y: 0, speed: 0, heading: 0, lapCount: 0, lastSector: -1, onTrack: true, blocked: false, braking: false,
   color: '#ff7300', accent: '#002147', num: '77', lapCooldown: 0, lapTime: 0, lapStartTime: 0,
-  errDrift: 0, errTimer: 0, trackIdx: 0, prevSpeed: 0,
-  offTrackTimer: 0, _prevIdx: 0, _hasWrapped: false,
+  errDrift: 0, errTimer: 0, trackIdx: 0, prevSpeed: 0, lineBias: 0.12,
+  offTrackTimer: 0, _prevIdx: 0, _hasWrapped: false, slipstreamTimer: 0, slipStreamBoost: 0,
 };
 
 // ============================================================
@@ -519,7 +528,7 @@ function updatePlayer(car, dt) {
   if (!car.blocked) {
     if (keyState[km.up]) {
       if (car.speed < 0) car.speed += CFG.brake * dt;
-      else car.speed = Math.min(car.speed + CFG.accel * dt, 350);
+      else car.speed = Math.min(car.speed + CFG.accel * dt, 400 + (car.slipStreamBoost || 0));
     }
     if (keyState[km.down]) {
       if (car.speed > 0) car.speed = Math.max(car.speed - CFG.brake * dt, 0);
@@ -562,10 +571,9 @@ function updateAI(car, dt) {
   if (car.blocked || race.phase === 'FINISHED') return;
   dt = Math.min(dt, 0.05);
   const diff = currentDifficulty;
-  car._aggressiveCorner = false;
   const n = nearestTrackPoint(car.x, car.y);
 
-  // === Track position tracking (allow small backward corrections) ===
+  // === Track position tracking ===
   let idxDiff = n.idx - car.trackIdx;
   if (idxDiff < -track.length / 2) idxDiff += track.length;
   if (idxDiff > track.length / 2) idxDiff -= track.length;
@@ -573,199 +581,90 @@ function updateAI(car, dt) {
     car.trackIdx = n.idx;
   }
 
-  // === Off-track: slide naturally (same as player), main loop handles 1s respawn ===
+  // === Off-track: coast, main loop handles 1s respawn ===
   car.onTrack = n.dist <= CFG.trackWidth * 0.55;
   if (!car.onTrack) {
     car.speed -= CFG.offTrackDrag * dt;
     if (car.speed < 0) car.speed = 0;
-    // Still try to steer toward track — don't return early, let pursuit logic work
   }
 
-  // === Compute look-ahead distances (used by both Pure Pursuit and apex targeting) ===
+  // === Pure Pursuit on track centerline (no extra sway strategies) ===
   const avgSegLen = totalLen / track.length;
-  const predSteps = Math.floor(Math.min(car.speed * 5.0 / avgSegLen, track.length * 0.35));
+  const lookaheadDist = Math.min(Math.max(car.speed * 2.0, 100), 500);
+  const lookSteps = Math.min(Math.floor(lookaheadDist / avgSegLen), track.length * 0.35);
+  const tIdx = (car.trackIdx + lookSteps) % track.length;
+  const target = track[tIdx];
 
-  // === Pure Pursuit — steer toward centerline (with apex targeting in corners) ===
-  const lookSteps = 15 + Math.floor((car.speed / CFG.maxSpeed) * 35);
-  const tIdx = (car.trackIdx + Math.min(lookSteps, track.length - 1)) % track.length;
-
-  // Scan ahead for corner apex — the point of maximum curvature
-  let apexTarget = null;
-  let apexReached = false;
-  let bestApexIdx = -1;
-  let insideDir = 0;
-  if (predSteps > 5) {
-    bestApexIdx = -1;
-    let bestCross = 0;
-    const searchEnd = Math.min(predSteps, 90);
-    for (let i = 5; i < searchEnd; i++) {
-      const idx = (car.trackIdx + i) % track.length;
-      const next = (idx + 1) % track.length;
-      const cross = Math.abs(track[idx].tx * track[next].ty - track[idx].ty * track[next].tx);
-      if (cross > bestCross) { bestCross = cross; bestApexIdx = idx; }
-    }
-    if (bestCross > 0.015 && bestApexIdx >= 0 && car.speed > 100) {
-      // Determine inside direction and offset magnitude
-      const cross = track[bestApexIdx].tx * track[(bestApexIdx + 1) % track.length].ty
-                  - track[bestApexIdx].ty * track[(bestApexIdx + 1) % track.length].tx;
-      insideDir = -Math.sign(cross);
-      const apexIntensity = Math.min(1, bestCross * 60);
-      const apexOffset = apexIntensity * CFG.trackWidth * 0.22;
-      apexTarget = {
-        x: track[bestApexIdx].x + track[bestApexIdx].nx * insideDir * apexOffset,
-        y: track[bestApexIdx].y + track[bestApexIdx].ny * insideDir * apexOffset,
-      };
-      // Check if car has passed the apex (trackIdx beyond apexIdx)
-      if (car.trackIdx > bestApexIdx || (car.trackIdx < 5 && bestApexIdx > track.length * 0.8)) {
-        apexReached = true;
-      }
-    }
-  }
-
-  // Select target: apex target when cornering, centerline otherwise
-  const target = apexTarget && !apexReached ? apexTarget : track[tIdx];
-
+  // Steer toward target
   const dx = target.x - car.x, dy = target.y - car.y;
   const targetAngle = Math.atan2(dx, -dy);
   let headingErr = targetAngle - car.heading;
   while (headingErr > Math.PI) headingErr -= 2 * Math.PI;
   while (headingErr < -Math.PI) headingErr += 2 * Math.PI;
-  const errAbs = Math.abs(headingErr);
 
-  // === Steering ===
-  car.errTimer -= dt;
-  if (car.errTimer <= 0) { car.errDrift = (Math.random() - 0.5) * 0.10 * diff.errorScale; car.errTimer = 0.5 + Math.random() * 0.6; }
+  // Smooth steering: proportional to error, capped rate, frame-rate independent
+  const maxSteerRate = 4.0;
+  const steerGain = 2.5;
+  const steerCmd = Math.sign(headingErr) * Math.min(Math.abs(headingErr) * steerGain, maxSteerRate);
+  car.heading += steerCmd * dt;
 
-  const steerGain = errAbs > Math.PI / 3 ? 2.8 : 1.5;
-  car.heading += Math.sign(headingErr + car.errDrift) * Math.min(Math.abs(headingErr + car.errDrift), 7.0 * dt) * steerGain;
-
-  // === Predictive pre-steering: look ~3s ahead and start turning well before corners ===
-  let runWideUrgency = 0;
-
-  if (predSteps > 3) {
-    const predIdx = (car.trackIdx + Math.min(predSteps, track.length - 1)) % track.length;
-    const predTangent = Math.atan2(track[predIdx].tx, -track[predIdx].ty);
-    let predErr = predTangent - car.heading;
-    while (predErr > Math.PI) predErr -= 2 * Math.PI;
-    while (predErr < -Math.PI) predErr += 2 * Math.PI;
-    predErr = Math.max(-0.6, Math.min(0.6, predErr));
-
-    // Pre-steer toward corners (proportional, no counter-steer — keeps AI on track)
-    if (Math.abs(predErr) > 0.20 && car.speed > 150) {
-      let minSpd = Infinity;
-      for (let i = 5; i < Math.min(predSteps, 80); i += 5) {
-        const si = (car.trackIdx + i) % speedProfile.length;
-        if (speedProfile[si] < minSpd) minSpd = speedProfile[si];
-      }
-      const cornerSharpness = Math.max(0, Math.min(1, 1 - minSpd / (CFG.maxSpeed * 0.4)));
-      const preGain = 0.08 + cornerSharpness * 0.18; // 0.08 (gentle) → 0.26 (sharp)
-      car.heading += predErr * preGain * dt;
-      if (cornerSharpness > 0.4) car._aggressiveCorner = true;
-    } else {
-      car.heading += predErr * 0.08 * dt;
+  // === AI vs AI avoidance: nudge away from nearby cars ===
+  for (const other of getActiveCars()) {
+    if (other === car || other.blocked) continue;
+    const adx = other.x - car.x, ady = other.y - car.y;
+    const adist = Math.sqrt(adx * adx + ady * ady);
+    if (adist < 65 && adist > 0.1) {
+      const avoidAngle = Math.atan2(adx, -ady);
+      let avoidErr = avoidAngle - car.heading;
+      while (avoidErr > Math.PI) avoidErr -= 2 * Math.PI;
+      while (avoidErr < -Math.PI) avoidErr += 2 * Math.PI;
+      car.heading -= Math.sign(avoidErr) * (1 - adist / 65) * 2.0 * dt;
     }
   }
 
-    // Also predict lateral distance 2s ahead and correct if running wide
-    const predX = car.x + Math.sin(car.heading) * car.speed * 2.0;
-    const predY = car.y - Math.cos(car.heading) * car.speed * 2.0;
-    const pn = nearestTrackPoint(predX, predY);
-    const predThresh = CFG.trackWidth * 0.15;
-    if (pn.dist > predThresh) {
-      runWideUrgency = Math.min(1, (pn.dist - predThresh) / (CFG.trackWidth * 0.20));
-      const predSigned = (predX - track[pn.idx].x) * track[pn.idx].nx + (predY - track[pn.idx].y) * track[pn.idx].ny;
-      car.heading += Math.sign(-predSigned) * runWideUrgency * 1.5 * dt;
-    }
-
-  // === Edge-based safety net (keep car + tires on track) ===
-  if (car.onTrack) {
-    const halfL = 22, halfW = 14;
-    const cosH = Math.cos(car.heading), sinH = Math.sin(car.heading);
-    // Front/rear center + rear tire positions
-    const rn = nearestTrackPoint(car.x + cosH * halfL, car.y + sinH * halfL);   // front center
-    const ln = nearestTrackPoint(car.x - cosH * halfL, car.y - sinH * halfL);   // rear center
-    const rt = nearestTrackPoint(car.x - sinH * halfL + cosH * halfW, car.y + cosH * halfL + sinH * halfW); // right rear tire
-    const lt = nearestTrackPoint(car.x - sinH * halfL - cosH * halfW, car.y + cosH * halfL - sinH * halfW); // left rear tire
-    const edgeThresh = CFG.trackWidth * 0.30;
-    if (rn.dist > edgeThresh || ln.dist > edgeThresh || rt.dist > edgeThresh || lt.dist > edgeThresh) {
-      const rightUrg = Math.max(0, (rn.dist - edgeThresh) / (CFG.trackWidth * 0.10))
-                     + Math.max(0, (rt.dist - edgeThresh) / (CFG.trackWidth * 0.10));
-      const leftUrg  = Math.max(0, (ln.dist - edgeThresh) / (CFG.trackWidth * 0.10))
-                     + Math.max(0, (lt.dist - edgeThresh) / (CFG.trackWidth * 0.10));
-      const urg = Math.min(1, Math.min(rightUrg + leftUrg, 1));
-      if (rightUrg > leftUrg) car.heading -= urg * 3.0 * dt;
-      else car.heading += urg * 3.0 * dt;
-      if (urg > runWideUrgency) runWideUrgency = urg;
-    }
-  }
-
-  // === On-track speed control ===
+  // === Speed control using centerline speed profile ===
   if (car.onTrack) {
     car.braking = false;
-    const diffMax = Math.min(CFG.maxSpeed * diff.speedMult, 400);
-    const diffScale = diff.cornerSpeed / 0.78;
-
-    // Scan ahead for lowest profile speed
-    const scanAhead = 20 + Math.floor((car.speed / CFG.maxSpeed) * 70);
-    let minProfileSpeed = Infinity;
-    for (let i = 5; i < scanAhead; i += 3) {
+    const diffMax = Math.min(CFG.maxSpeed * diff.speedMult, 600 + (car.slipStreamBoost || 0));
+    const scanAheadSteps = 10 + Math.min(Math.floor(car.speed * 3.0 / avgSegLen), track.length * 0.30);
+    let minProfileSpd = Infinity;
+    for (let i = 5; i < scanAheadSteps; i += 3) {
       const idx = (car.trackIdx + i) % speedProfile.length;
-      if (speedProfile[idx] < minProfileSpeed) minProfileSpeed = speedProfile[idx];
+      if (speedProfile[idx] < minProfileSpd) minProfileSpd = speedProfile[idx];
     }
-
-    const scaledProfile = minProfileSpeed * diffScale;
-    const cornerInd = Math.min(1, 2.5 * Math.max(0, 1 - minProfileSpeed / (CFG.maxSpeed * 1.1)));
-    const targetBlend = diffMax * (1 - cornerInd) + scaledProfile * cornerInd;
-    let targetSpeed = Math.min(diffMax, targetBlend);
-    targetSpeed = Math.max(targetSpeed, diffMax * 0.12);
-
-    // Reduce speed when running wide near edge
-    if (runWideUrgency > 0) targetSpeed *= (1 - runWideUrgency * 0.45);
-
-    // Braking zone — force deceleration if speed exceeds what's ahead
-    // (trail-brake: reduce brake force when actively turning into apex)
-    const trailBrake = apexTarget && !apexReached && car.speed > 100 ? 0.55 : 1.0;
-    if (car.speed > scaledProfile * 1.1) {
-      car.speed = Math.max(car.speed - CFG.brake * trailBrake * dt, scaledProfile);
-      car.braking = true;
-    }
-
-    // Anti-spin — hard heading error cuts speed
-    if (errAbs > Math.PI / 2) targetSpeed *= 0.15;
-
-    // Apply acceleration / deceleration toward target speed
+    const cornerLimit = minProfileSpd * (diff.cornerSpeed / 0.78);
+    const targetSpeed = Math.min(diffMax, cornerLimit);
     const spdErr = targetSpeed - car.speed;
-    if (spdErr > 0) car.speed = Math.min(car.speed + spdErr, car.speed + CFG.accel * diff.accelFactor * dt);
-    else car.speed = Math.max(car.speed - Math.min(-spdErr, CFG.brake * diff.brakeFactor * dt), 0);
-
-    // Brake lights
+    if (Math.abs(spdErr) > 3) {
+      if (spdErr < 0) {
+        const decel = Math.min(-spdErr * 2.0, CFG.brake);
+        car.speed = Math.max(car.speed - decel * dt, targetSpeed);
+        car.braking = true;
+      } else if (car.speed < diffMax) {
+        car.speed = Math.min(car.speed + CFG.accel * diff.accelFactor * dt, targetSpeed);
+      }
+    }
     if (!car.braking) car.braking = car.speed < car.prevSpeed - 8 && car.speed > 30;
     car.prevSpeed = car.speed;
-
     car.speed -= CFG.drag * (car.speed / CFG.maxSpeed) * dt;
     if (car.speed < 0) car.speed = 0;
-    if (car.speed > CFG.maxSpeed) car.speed = CFG.maxSpeed;
+    if (car.speed > diffMax) car.speed = diffMax;
   } else {
-    // Off-track: coast with drag, don't accelerate
     car.braking = true;
     car.prevSpeed = car.speed;
   }
 
-  // Position update (always, after speed adjustments)
+  // Position update
   car.x += Math.sin(car.heading) * car.speed * dt;
   car.y -= Math.cos(car.heading) * car.speed * dt;
-
-  // Lap detection handled centrally in game loop
 }
-
-// ============================================================
-// COLLISION
-// ============================================================
 function checkCollisions() {
   const cars = getActiveCars();
   for (let i = 0; i < cars.length; i++) {
     for (let j = i + 1; j < cars.length; j++) {
       const a = cars[i], b = cars[j];
+      // Skip AI-AI collisions
+      if ((a === a1 || a === a2) && (b === a1 || b === a2)) continue;
       const dx = a.x - b.x, dy = a.y - b.y, dist = Math.sqrt(dx * dx + dy * dy);
       if (dist < 38 && dist > 0.01) {
         const nx = dx / dist, ny = dy / dist, overlap = (38 - dist) * 0.6;
@@ -785,6 +684,7 @@ function checkCollisions() {
 // ============================================================
 function startCountdown() {
   if (race.phase === 'RACING' || race.phase === 'COUNTDOWN') return;
+  computeRacingLineAndProfile();
   initPositions();
   race.phase = 'COUNTDOWN';
   race.lightsOn = 0; race.countTimer = 0; race.countStep = 0;
@@ -926,6 +826,44 @@ function drawWake(car) {
   grad.addColorStop(1, 'rgba(180, 210, 255, 0)');
   ctx.fillStyle = grad;
   ctx.fill();
+  ctx.restore();
+}
+
+function drawSlipstream(car) {
+  if (!car.slipStreamBoost || car.slipStreamBoost <= 0 || car.speed < 200) return;
+  const intensity = Math.min(1, car.slipstreamTimer / 1.5);
+  const len = 40 + intensity * 60;
+  const w = 6 + intensity * 12;
+  const cosH = Math.cos(car.heading), sinH = Math.sin(car.heading);
+  // Rear of car body
+  const rx = car.x - sinH * 42, ry = car.y + cosH * 42;
+  // End of wake
+  const ex = rx - sinH * len, ey = ry + cosH * len;
+  const hw = w / 2, fw = hw * 0.3;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(rx + cosH * hw, ry + sinH * hw);
+  ctx.lineTo(rx - cosH * hw, ry - sinH * hw);
+  ctx.lineTo(ex - cosH * fw, ey - sinH * fw);
+  ctx.lineTo(ex + cosH * fw, ey + sinH * fw);
+  ctx.closePath();
+  const grad = ctx.createLinearGradient(rx, ry, ex, ey);
+  grad.addColorStop(0, `rgba(100, 200, 255, ${0.35 * intensity})`);
+  grad.addColorStop(1, 'rgba(100, 200, 255, 0)');
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  // Additional glow particles
+  for (let i = 0; i < 4; i++) {
+    const t = Math.random();
+    const px = rx + (ex - rx) * t + (Math.random() - 0.5) * w;
+    const py = ry + (ey - ry) * t + (Math.random() - 0.5) * w;
+    ctx.beginPath();
+    ctx.arc(px, py, 2 + Math.random() * 3, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(100, 200, 255, ${0.3 * intensity * (1 - t)})`;
+    ctx.fill();
+  }
   ctx.restore();
 }
 
@@ -1251,6 +1189,20 @@ function drawHUD() {
   ctx.fillStyle = '#88ccff'; ctx.font = 'bold 11px "Courier New",monospace'; ctx.textAlign = 'center';
   ctx.fillText(`难度: ${currentDifficulty.label}`, W-68, infoY+18);
 
+    // Slipstream boost indicator
+  const slipCars = gameSettings.mode === 'dual' ? [p1, p2] : [p1];
+  for (const sc of slipCars) {
+    if (sc.slipStreamBoost > 0) {
+      if (gameSettings.mode === 'dual' && dualSplit) {
+        ctx.fillStyle = '#ffcc00'; ctx.font = 'bold 10px "Courier New",monospace'; ctx.textAlign = 'center';
+        ctx.fillText('[尾流]', sc === p1 ? 83 : W - 83, 88);
+      } else if (sc === p1) {
+        ctx.fillStyle = '#ffcc00'; ctx.font = 'bold 10px "Courier New",monospace'; ctx.textAlign = 'center';
+        ctx.fillText('[尾流]', 83, 88);
+      }
+    }
+  }
+
   // Camera focus indicator (not shown in split-screen dual mode)
   if (!dualSplit) {
     roundRect(ctx, W-120, infoY+32, 104, 26, 4); ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fill();
@@ -1332,6 +1284,7 @@ function renderView(ox, oy, vw, vh, camObj, zoomVal, camPlayer) {
 
   for (const c of getActiveCars()) {
     drawWake(c);
+    drawSlipstream(c);
     drawCar(c.x, c.y, c.heading, c);
   }
 
@@ -1437,6 +1390,54 @@ function drawMinimap() {
 }
 
 // ============================================================
+
+// ============================================================
+// SLIPSTREAM / DRAFTING
+// ============================================================
+function updateSlipstream(car, dt) {
+  const SLIP_DIST = 250;   // max distance to benefit from slipstream (px, ~3 car lengths)
+  const SLIP_ANGLE = 0.5; // max heading difference (radians)
+  const BOOST_SPEED = 45; // extra max speed when charged
+  const CHARGE_TIME = 0.5; // seconds needed to charge boost
+
+  car.slipstreamTimer = car.slipstreamTimer || 0;
+  car.slipStreamBoost = car.slipStreamBoost || 0;
+
+  let inSlip = false;
+  for (const other of getActiveCars()) {
+    if (other === car || other.blocked) continue;
+
+    const dx = other.x - car.x, dy = other.y - car.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist > SLIP_DIST) continue;
+
+    // Other car must be ahead in car's heading direction
+    const dot = Math.sin(car.heading) * dx - Math.cos(car.heading) * dy;
+    if (dot < 0) continue;
+
+    // Heading must be roughly aligned
+    let hd = other.heading - car.heading;
+    while (hd > Math.PI) hd -= 2 * Math.PI;
+    while (hd < -Math.PI) hd += 2 * Math.PI;
+    if (Math.abs(hd) > SLIP_ANGLE) continue;
+
+    inSlip = true;
+    break;
+  }
+
+  if (inSlip) {
+    car.slipstreamTimer = Math.min(car.slipstreamTimer + dt, 3.0);
+    if (car.slipstreamTimer >= CHARGE_TIME) {
+      car.slipStreamBoost = BOOST_SPEED;
+    }
+  } else {
+    // Fast decay when not in slipstream
+    car.slipstreamTimer = Math.max(0, car.slipstreamTimer - dt * 2);
+    if (car.slipstreamTimer < CHARGE_TIME) {
+      car.slipStreamBoost = 0;
+    }
+  }
+}
 // MAIN LOOP
 // ============================================================
 let lastTime = 0;
@@ -1457,6 +1458,9 @@ function gameLoop(time) {
     if (gameSettings.aiCount >= 1) updateAI(a1, dt);
     if (gameSettings.aiCount >= 2) updateAI(a2, dt);
 
+    // Slipstream / drafting
+    for (const c of getActiveCars()) { if (!c.blocked) updateSlipstream(c, dt); }
+
     // Collisions
     if (race.phase === 'RACING') checkCollisions();
     updateSparks(dt);
@@ -1472,7 +1476,15 @@ function gameLoop(time) {
             c.heading = Math.atan2(n.point.tx, -n.point.ty);
             c.speed = 50;
             if (c.trackIdx !== undefined) { c.trackIdx = n.idx; c.errDrift = 0; c.errTimer = 0; c.prevSpeed = 0; }
-            c._prevIdx = n.idx; c._hasWrapped = false;
+            c._prevIdx = n.idx;
+            // If car had already wrapped but respawns past finish line, count the lap immediately
+            if (c._hasWrapped && n.idx >= finishIdx && c.lapCooldown <= 0) {
+              c.lapCount++;
+              c.lapCooldown = 1.5;
+              c.lapTime = race.elapsedTime - c.lapStartTime;
+              c.lapStartTime = race.elapsedTime;
+              c._hasWrapped = false;
+            }
             c.offTrackTimer = 0;
           }
         } else {
@@ -1498,8 +1510,8 @@ function gameLoop(time) {
             c.lapStartTime = race.elapsedTime;
             c._hasWrapped = false;
           }
+          c._prevIdx = n.idx;
         }
-        c._prevIdx = n.idx;
       }
     }
 
