@@ -26,6 +26,7 @@ canvas{display:block}
 #btnCamFocus:hover{background:rgba(200,136,50,0.2)}
 #btnLaps{color:#aa66ff;border-color:#8844cc;min-width:72px}
 #btnLaps:hover{background:rgba(136,68,204,0.2)}
+#btnTrack{color:#ff66ff;border-color:#cc44cc;min-width:72px}
 #btnMode{color:#66ffaa;border-color:#44cc88;min-width:72px}
 #btnMode:hover{background:rgba(50,200,100,0.2)}
 #btnAI{color:#ff66aa;border-color:#cc4488;min-width:72px}
@@ -35,10 +36,11 @@ canvas{display:block}
 <body>
 <canvas id="c"></canvas>
 <div id="gameUI">
-  <div id="trackLabel">F1 大奖赛赛道</div>
+  <div id="trackLabel">巴林赛道</div>
   <div id="ctrlPanel">
     <button class="ctrl-btn" id="btnStart">▶ 开始比赛</button>
     <button class="ctrl-btn" id="btnStop">■ 停止</button>
+	    <button class="ctrl-btn" id="btnTrack">⚇ 赛道</button>
     <button class="ctrl-btn" id="btnReset">↺ 重置</button>
     <button class="ctrl-btn" id="btnDifficulty">中等</button>
     <button class="ctrl-btn" id="btnMode">单人</button>
@@ -59,6 +61,60 @@ let W, H;
 function resize() { W = canvas.width = window.innerWidth; H = canvas.height = window.innerHeight; }
 window.addEventListener('resize', resize);
 resize();
+
+// Mouse tracking (for track selector hover)
+let mouseX = -1, mouseY = -1;
+canvas.addEventListener('mousemove', e => { const r = canvas.getBoundingClientRect(); mouseX = e.clientX - r.left; mouseY = e.clientY - r.top; });
+canvas.addEventListener('mouseleave', () => { mouseX = -1; mouseY = -1; });
+canvas.addEventListener('click', e => {
+  if (!showTrackSelector) return;
+  const r = canvas.getBoundingClientRect();
+  const cx = e.clientX - r.left, cy = e.clientY - r.top;
+  const cols = TRACKS_PER_PAGE, cardW = 260, cardH = 270, gap = 30;
+  const totalW = cols * cardW + (cols-1) * gap;
+  const sx = (W - totalW) / 2, sy = (H - cardH) / 2;
+  const totalPages = Math.ceil(TRACK_PREVIEWS.length / TRACKS_PER_PAGE);
+  const offset = trackSelectorPage * TRACKS_PER_PAGE;
+
+  // Check prev/next arrow clicks
+  const arrSize = 50;
+  const prevX = sx - arrSize - 10, prevY = sy + cardH/2 - arrSize/2;
+  const nextX = sx + totalW + 10, nextY = sy + cardH/2 - arrSize/2;
+  if (trackSelectorPage > 0 && cx >= prevX && cx <= prevX + arrSize && cy >= prevY && cy <= prevY + arrSize) {
+    trackSelectorPage--;
+    return;
+  }
+  if (trackSelectorPage < totalPages - 1 && cx >= nextX && cx <= nextX + arrSize && cy >= nextY && cy <= nextY + arrSize) {
+    trackSelectorPage++;
+    return;
+  }
+
+  for (let i = 0; i < cols && offset + i < TRACK_PREVIEWS.length; i++) {
+    const x = sx + i * (cardW + gap), y = sy;
+    if (cx >= x && cx <= x + cardW && cy >= y && cy <= y + cardH) {
+      const trackIdx = offset + i;
+      showTrackSelector = false;
+      const td = TRACK_DATA[trackIdx];
+      if (trackIdx !== currentTrackIdx) {
+        currentTrackIdx = trackIdx;
+        generateTrack(td);
+        initPositions();
+        race.phase = 'IDLE'; race.elapsedTime = 0; race.winner = null;
+        race.lightsOn = 0; race.countTimer = 0; race.countStep = 0;
+        document.getElementById('trackLabel').textContent = td.label;
+        document.getElementById('btnTrack').textContent = '⚇ ' + td.label;
+        const cars = getActiveCars();
+        let mx = 0, my = 0;
+        for (const c of cars) { mx += c.x; my += c.y; }
+        mx /= cars.length; my /= cars.length;
+        cam.x = mx - W / (2 * ZOOM); cam.y = my - H / (2 * ZOOM);
+        currentZoom = ZOOM; smoothTargetZoom = ZOOM;
+        if (gameSettings.mode === 'dual') { cam2.x = p2.x - W / (4 * ZOOM); cam2.y = p2.y - H / (2 * ZOOM); }
+      }
+      break;
+    }
+  }
+});
 
 // ---------- roundRect polyfill ----------
 function roundRect(ctx, x, y, w, h, r) {
@@ -90,13 +146,1055 @@ const CFG = {
   turnHigh: 0.85,
 };
 
+// ============================================================
+// DRS CONSTANTS
+// ============================================================
+const DRS_BOOST = 45;
+const DRS_DURATION = 3.0;
+const DRS_COOLDOWN = 10.0;
+const DRS_COOLDOWN_CLEAN = 5.0;
+const DRS_STRAIGHT_THRESHOLD = 600;
+
+
+// ============================================================
+// TRACK DATA — 15 clean F1 circuits (all WP-intersect=0)
+// Generated from meijersa/f1-circuits GeoJSON
+// ============================================================
+const TRACK_DATA = [
+  // 荷兰赛道: 70 wps (from GeoJSON)
+
+  // 巴林赛道: 63 wps, WP-intersect=0, CR-intersect=1
+
+  {
+    id: "bahrain", name: "Bahrain", label: "巴林赛道",
+    startWp: 19, finishWp: 24,
+    waypoints: [
+      [-1880, 528],
+      [-1865, 814],
+      [-1842, 1099],
+      [-1805, 1383],
+      [-1749, 1663],
+      [-1668, 1937],
+      [-1553, 2198],
+      [-1387, 2429],
+      [-1166, 2607],
+      [-904, 2718],
+      [-623, 2767],
+      [-338, 2774],
+      [-53, 2751],
+      [230, 2709],
+      [510, 2651],
+      [786, 2576],
+      [1055, 2478],
+      [1303, 2340],
+      [1485, 2129],
+      [1508, 1858],
+      [1383, 1606],
+      [1194, 1392],
+      [978, 1206],
+      [745, 1040],
+      [500, 892],
+      [242, 770],
+      [-36, 707],
+      [-304, 786],
+      [-471, 1016],
+      [-592, 1273],
+      [-766, 1237],
+      [-830, 959],
+      [-861, 674],
+      [-879, 389],
+      [-885, 103],
+      [-877, -183],
+      [-854, -469],
+      [-801, -750],
+      [-683, -1008],
+      [-447, -1146],
+      [-171, -1094],
+      [86, -968],
+      [346, -849],
+      [623, -792],
+      [884, -871],
+      [942, -1125],
+      [772, -1354],
+      [546, -1529],
+      [297, -1670],
+      [34, -1783],
+      [-240, -1862],
+      [-523, -1901],
+      [-808, -1882],
+      [-1078, -1792],
+      [-1312, -1630],
+      [-1495, -1411],
+      [-1629, -1159],
+      [-1723, -889],
+      [-1788, -611],
+      [-1833, -328],
+      [-1860, -44],
+      [-1876, 242],
+      [-1880, 528]
+    ],
+  },
+
+  // 巴林赛道: 63 wps, WP-intersect=0, CR-intersect=1
+
+  {
+    id: "melbourne", name: "Melbourne", label: "澳大利亚赛道",
+    startWp: 45, finishWp: 49,
+    waypoints: [
+      [-478, -1520],
+      [-674, -1311],
+      [-864, -1096],
+      [-1043, -873],
+      [-1210, -640],
+      [-1365, -399],
+      [-1514, -154],
+      [-1665, 90],
+      [-1819, 332],
+      [-1970, 575],
+      [-2110, 825],
+      [-2224, 1088],
+      [-2284, 1366],
+      [-2265, 1649],
+      [-2175, 1920],
+      [-2042, 2174],
+      [-1879, 2409],
+      [-1686, 2619],
+      [-1464, 2801],
+      [-1218, 2945],
+      [-949, 3039],
+      [-666, 3059],
+      [-389, 2996],
+      [-140, 2858],
+      [64, 2660],
+      [215, 2419],
+      [312, 2150],
+      [357, 1868],
+      [353, 1582],
+      [314, 1299],
+      [268, 1016],
+      [241, 731],
+      [251, 445],
+      [306, 164],
+      [411, -102],
+      [563, -344],
+      [756, -554],
+      [981, -730],
+      [1225, -880],
+      [1469, -1031],
+      [1696, -1206],
+      [1895, -1411],
+      [2061, -1644],
+      [2189, -1900],
+      [2268, -2175],
+      [2278, -2460],
+      [2185, -2729],
+      [1958, -2895],
+      [1674, -2894],
+      [1404, -2798],
+      [1144, -2678],
+      [884, -2557],
+      [630, -2423],
+      [390, -2268],
+      [161, -2096],
+      [-59, -1912],
+      [-272, -1719],
+      [-478, -1520]
+    ],
+  },
+
+  // 澳大利亚赛道: 58 wps, WP-intersect=0, CR-intersect=1
+
+  {
+    id: "shanghai", name: "Shanghai", label: "上海赛道",
+    startWp: 58, finishWp: 63,
+    waypoints: [
+      [-610, -2156],
+      [-896, -2163],
+      [-1181, -2169],
+      [-1466, -2173],
+      [-1751, -2169],
+      [-2034, -2138],
+      [-2292, -2033],
+      [-2335, -1811],
+      [-2056, -1762],
+      [-2032, -1509],
+      [-2142, -1246],
+      [-2279, -996],
+      [-2422, -749],
+      [-2563, -501],
+      [-2698, -250],
+      [-2818, 9],
+      [-2895, 280],
+      [-2739, 391],
+      [-2518, 210],
+      [-2315, 10],
+      [-2102, -179],
+      [-1861, -328],
+      [-1587, -394],
+      [-1309, -347],
+      [-1054, -221],
+      [-810, -73],
+      [-552, 45],
+      [-273, 96],
+      [5, 145],
+      [138, 362],
+      [85, 639],
+      [-24, 903],
+      [-156, 1155],
+      [-307, 1397],
+      [-477, 1627],
+      [-665, 1840],
+      [-866, 2043],
+      [-1021, 2279],
+      [-899, 2484],
+      [-633, 2429],
+      [-403, 2263],
+      [-199, 2064],
+      [-8, 1852],
+      [175, 1633],
+      [352, 1410],
+      [525, 1183],
+      [695, 954],
+      [862, 723],
+      [1027, 490],
+      [1190, 256],
+      [1350, 20],
+      [1509, -217],
+      [1666, -455],
+      [1820, -695],
+      [1971, -938],
+      [2116, -1183],
+      [2253, -1433],
+      [2368, -1694],
+      [2409, -1974],
+      [2234, -2179],
+      [1955, -2229],
+      [1670, -2223],
+      [1385, -2205],
+      [1100, -2187],
+      [816, -2172],
+      [530, -2161],
+      [245, -2154],
+      [-40, -2151],
+      [-325, -2152],
+      [-610, -2156]
+    ],
+  },
+
+  // 上海赛道: 70 wps, WP-intersect=0, CR-intersect=1
+
+  {
+    id: "barcelona", name: "Barcelona", label: "西班牙赛道",
+    startWp: 58, finishWp: 63,
+    waypoints: [
+      [1187, -55],
+      [1042, -299],
+      [895, -543],
+      [747, -785],
+      [595, -1026],
+      [442, -1265],
+      [286, -1502],
+      [126, -1737],
+      [-38, -1969],
+      [-209, -2197],
+      [-391, -2414],
+      [-593, -2614],
+      [-824, -2778],
+      [-1083, -2894],
+      [-1354, -2979],
+      [-1630, -3049],
+      [-1910, -3088],
+      [-2185, -3042],
+      [-2394, -2864],
+      [-2482, -2600],
+      [-2469, -2318],
+      [-2396, -2045],
+      [-2285, -1783],
+      [-2147, -1536],
+      [-1981, -1305],
+      [-1775, -1113],
+      [-1514, -1054],
+      [-1404, -1292],
+      [-1428, -1575],
+      [-1452, -1856],
+      [-1341, -2090],
+      [-1077, -2097],
+      [-831, -1960],
+      [-622, -1769],
+      [-460, -1537],
+      [-371, -1269],
+      [-370, -987],
+      [-426, -709],
+      [-492, -432],
+      [-525, -150],
+      [-497, 131],
+      [-397, 397],
+      [-242, 634],
+      [-54, 847],
+      [152, 1042],
+      [369, 1226],
+      [589, 1406],
+      [808, 1587],
+      [1015, 1782],
+      [1141, 2026],
+      [980, 2253],
+      [822, 2478],
+      [921, 2726],
+      [1166, 2868],
+      [1444, 2924],
+      [1726, 2898],
+      [1979, 2776],
+      [2146, 2553],
+      [2193, 2276],
+      [2156, 1995],
+      [2075, 1723],
+      [1972, 1458],
+      [1855, 1199],
+      [1731, 943],
+      [1601, 690],
+      [1466, 440],
+      [1328, 192],
+      [1187, -55]
+    ],
+  },
+
+  // 西班牙赛道: 68 wps, WP-intersect=0, CR-intersect=1
+
+  {
+    id: "monaco", name: "Monaco", label: "摩纳哥赛道",
+    startWp: 6, finishWp: 10,
+    waypoints: [
+      [942, 2172],
+      [1083, 2419],
+      [1262, 2639],
+      [1487, 2807],
+      [1759, 2872],
+      [2042, 2893],
+      [2180, 2705],
+      [2128, 2426],
+      [2023, 2161],
+      [1889, 1910],
+      [1731, 1673],
+      [1551, 1452],
+      [1354, 1247],
+      [1142, 1057],
+      [915, 885],
+      [676, 730],
+      [427, 592],
+      [168, 473],
+      [-98, 372],
+      [-371, 289],
+      [-646, 217],
+      [-922, 146],
+      [-1195, 65],
+      [-1458, -44],
+      [-1696, -199],
+      [-1879, -418],
+      [-1973, -686],
+      [-1994, -970],
+      [-1971, -1254],
+      [-1926, -1535],
+      [-1866, -1813],
+      [-1790, -2088],
+      [-1698, -2357],
+      [-1598, -2624],
+      [-1556, -2898],
+      [-1755, -2918],
+      [-1909, -2680],
+      [-2014, -2415],
+      [-2095, -2142],
+      [-2162, -1865],
+      [-2217, -1586],
+      [-2259, -1304],
+      [-2287, -1021],
+      [-2293, -736],
+      [-2263, -453],
+      [-2168, -185],
+      [-1990, 36],
+      [-1753, 192],
+      [-1491, 304],
+      [-1221, 394],
+      [-949, 478],
+      [-676, 560],
+      [-404, 645],
+      [-135, 736],
+      [131, 838],
+      [388, 960],
+      [624, 1118],
+      [802, 1336],
+      [884, 1607],
+      [901, 1891],
+      [942, 2172]
+    ],
+  },
+
+  // 摩纳哥赛道: 61 wps, WP-intersect=0, CR-intersect=1
+
+  {
+    id: "montreal", name: "Montreal", label: "加拿大赛道",
+    startWp: 3, finishWp: 6,
+    waypoints: [
+      [750, -1711],
+      [794, -2000],
+      [838, -2290],
+      [874, -2580],
+      [858, -2868],
+      [654, -3011],
+      [388, -2904],
+      [164, -2716],
+      [-25, -2493],
+      [-189, -2250],
+      [-332, -1994],
+      [-460, -1731],
+      [-581, -1464],
+      [-710, -1201],
+      [-840, -938],
+      [-928, -659],
+      [-966, -369],
+      [-969, -76],
+      [-947, 217],
+      [-903, 506],
+      [-838, 792],
+      [-755, 1073],
+      [-666, 1352],
+      [-585, 1634],
+      [-521, 1919],
+      [-473, 2208],
+      [-435, 2499],
+      [-347, 2768],
+      [-206, 2574],
+      [-120, 2295],
+      [-40, 2013],
+      [36, 1730],
+      [110, 1446],
+      [182, 1162],
+      [252, 878],
+      [319, 592],
+      [384, 307],
+      [445, 20],
+      [504, -267],
+      [558, -555],
+      [610, -843],
+      [658, -1132],
+      [704, -1421],
+      [750, -1711]
+    ],
+  },
+
+  // 加拿大赛道: 44 wps, WP-intersect=0, CR-intersect=1
+
+  {
+    id: "spielberg", name: "Spielberg", label: "奥地利赛道",
+    startWp: 48, finishWp: 52,
+    waypoints: [
+      [938, -1404],
+      [649, -1400],
+      [361, -1376],
+      [76, -1324],
+      [-201, -1243],
+      [-468, -1132],
+      [-721, -992],
+      [-957, -826],
+      [-1177, -638],
+      [-1383, -435],
+      [-1577, -221],
+      [-1760, 3],
+      [-1934, 234],
+      [-2098, 473],
+      [-2251, 718],
+      [-2388, 972],
+      [-2486, 1243],
+      [-2485, 1525],
+      [-2307, 1737],
+      [-2033, 1822],
+      [-1745, 1840],
+      [-1456, 1831],
+      [-1168, 1806],
+      [-880, 1770],
+      [-595, 1724],
+      [-312, 1663],
+      [-37, 1576],
+      [184, 1407],
+      [106, 1175],
+      [-151, 1049],
+      [-425, 957],
+      [-696, 855],
+      [-939, 699],
+      [-1055, 442],
+      [-973, 172],
+      [-763, -19],
+      [-492, -110],
+      [-205, -122],
+      [83, -96],
+      [370, -61],
+      [658, -30],
+      [947, -11],
+      [1236, -6],
+      [1525, -17],
+      [1812, -49],
+      [2095, -107],
+      [2366, -206],
+      [2597, -374],
+      [2700, -635],
+      [2566, -884],
+      [2331, -1051],
+      [2067, -1169],
+      [1792, -1258],
+      [1510, -1325],
+      [1225, -1374],
+      [938, -1404]
+    ],
+  },
+
+  // 奥地利赛道: 56 wps, WP-intersect=0, CR-intersect=1
+
+  {
+    id: "silverstone", name: "Silverstone", label: "英国赛道",
+    startWp: 11, finishWp: 15,
+    waypoints: [
+      [515, 3046],
+      [796, 2987],
+      [1060, 2874],
+      [1281, 2693],
+      [1445, 2457],
+      [1557, 2192],
+      [1635, 1915],
+      [1692, 1632],
+      [1736, 1346],
+      [1769, 1060],
+      [1792, 772],
+      [1800, 484],
+      [1782, 196],
+      [1726, -86],
+      [1630, -358],
+      [1504, -617],
+      [1362, -868],
+      [1211, -1114],
+      [1055, -1357],
+      [896, -1598],
+      [734, -1837],
+      [567, -2072],
+      [394, -2303],
+      [209, -2525],
+      [2, -2725],
+      [-250, -2859],
+      [-530, -2841],
+      [-771, -2685],
+      [-983, -2489],
+      [-1199, -2297],
+      [-1422, -2114],
+      [-1607, -1897],
+      [-1659, -1618],
+      [-1583, -1341],
+      [-1447, -1088],
+      [-1280, -852],
+      [-1092, -634],
+      [-884, -433],
+      [-658, -255],
+      [-413, -103],
+      [-154, 25],
+      [114, 132],
+      [388, 221],
+      [669, 284],
+      [952, 337],
+      [1101, 542],
+      [986, 805],
+      [816, 1038],
+      [624, 1254],
+      [419, 1457],
+      [202, 1648],
+      [-27, 1822],
+      [-273, 1972],
+      [-540, 2080],
+      [-819, 2154],
+      [-970, 2355],
+      [-817, 2596],
+      [-591, 2775],
+      [-333, 2903],
+      [-58, 2987],
+      [227, 3035],
+      [515, 3046]
+    ],
+  },
+
+  // 英国赛道: 62 wps, WP-intersect=0, CR-intersect=1
+
+  {
+    id: "hungaroring", name: "Hungaroring", label: "匈牙利赛道",
+    startWp: 41, finishWp: 46,
+    waypoints: [
+      [-1311, -1654],
+      [-1532, -1472],
+      [-1750, -1287],
+      [-1963, -1096],
+      [-2162, -890],
+      [-2294, -646],
+      [-2093, -559],
+      [-1821, -645],
+      [-1557, -757],
+      [-1296, -874],
+      [-1029, -976],
+      [-752, -998],
+      [-562, -819],
+      [-498, -542],
+      [-454, -259],
+      [-394, 21],
+      [-317, 296],
+      [-227, 568],
+      [-132, 838],
+      [-34, 1107],
+      [59, 1378],
+      [145, 1651],
+      [218, 1928],
+      [276, 2208],
+      [327, 2490],
+      [401, 2765],
+      [577, 2984],
+      [853, 2947],
+      [1088, 2784],
+      [1283, 2576],
+      [1443, 2339],
+      [1571, 2083],
+      [1684, 1820],
+      [1811, 1564],
+      [1970, 1327],
+      [2151, 1105],
+      [2316, 872],
+      [2434, 613],
+      [2507, 336],
+      [2558, 55],
+      [2593, -229],
+      [2605, -515],
+      [2580, -799],
+      [2505, -1074],
+      [2383, -1332],
+      [2223, -1569],
+      [2031, -1781],
+      [1810, -1961],
+      [1558, -2092],
+      [1281, -2149],
+      [997, -2128],
+      [713, -2099],
+      [610, -2305],
+      [691, -2580],
+      [625, -2829],
+      [348, -2771],
+      [92, -2642],
+      [-152, -2493],
+      [-390, -2335],
+      [-625, -2170],
+      [-856, -2001],
+      [-1084, -1829],
+      [-1311, -1654]
+    ],
+  },
+
+  // 匈牙利赛道: 63 wps, WP-intersect=0, CR-intersect=1
+
+  {
+    id: "monza", name: "Monza", label: "蒙扎赛道",
+    startWp: 21, finishWp: 25,
+    waypoints: [
+      [-1706, -416],
+      [-1675, -132],
+      [-1643, 152],
+      [-1608, 436],
+      [-1572, 719],
+      [-1540, 1003],
+      [-1515, 1288],
+      [-1490, 1573],
+      [-1443, 1854],
+      [-1345, 2121],
+      [-1178, 2350],
+      [-951, 2520],
+      [-690, 2637],
+      [-416, 2718],
+      [-138, 2783],
+      [142, 2842],
+      [421, 2903],
+      [699, 2970],
+      [976, 3037],
+      [1258, 3077],
+      [1528, 3022],
+      [1684, 2805],
+      [1667, 2528],
+      [1541, 2274],
+      [1358, 2057],
+      [1148, 1863],
+      [927, 1682],
+      [704, 1503],
+      [482, 1323],
+      [264, 1139],
+      [49, 950],
+      [-159, 754],
+      [-357, 548],
+      [-533, 324],
+      [-673, 75],
+      [-771, -192],
+      [-840, -469],
+      [-895, -750],
+      [-944, -1031],
+      [-990, -1313],
+      [-1036, -1596],
+      [-1084, -1877],
+      [-1134, -2159],
+      [-1192, -2439],
+      [-1270, -2713],
+      [-1412, -2956],
+      [-1655, -2948],
+      [-1779, -2694],
+      [-1820, -2412],
+      [-1826, -2126],
+      [-1818, -1841],
+      [-1802, -1555],
+      [-1782, -1270],
+      [-1759, -985],
+      [-1733, -701],
+      [-1706, -416]
+    ],
+  },
+
+  // 蒙扎赛道: 56 wps, WP-intersect=0, CR-intersect=1
+
+  {
+    id: "marina", name: "Marina Bay", label: "新加坡赛道",
+    startWp: 0, finishWp: 4,
+    waypoints: [
+      [2936, 630],
+      [2913, 345],
+      [2859, 64],
+      [2756, -201],
+      [2590, -431],
+      [2360, -596],
+      [2090, -682],
+      [1806, -706],
+      [1520, -698],
+      [1233, -688],
+      [947, -686],
+      [661, -684],
+      [376, -663],
+      [96, -608],
+      [-176, -519],
+      [-441, -410],
+      [-707, -306],
+      [-985, -248],
+      [-1261, -293],
+      [-1491, -453],
+      [-1663, -680],
+      [-1799, -931],
+      [-1924, -1188],
+      [-2072, -1433],
+      [-2295, -1602],
+      [-2556, -1519],
+      [-2749, -1308],
+      [-2897, -1065],
+      [-2983, -794],
+      [-2974, -510],
+      [-2888, -238],
+      [-2756, 16],
+      [-2591, 248],
+      [-2390, 451],
+      [-2153, 609],
+      [-1887, 709],
+      [-1605, 756],
+      [-1319, 771],
+      [-1033, 769],
+      [-747, 760],
+      [-461, 746],
+      [-175, 732],
+      [111, 718],
+      [397, 709],
+      [683, 706],
+      [969, 715],
+      [1254, 743],
+      [1533, 801],
+      [1799, 904],
+      [2032, 1066],
+      [2217, 1282],
+      [2376, 1520],
+      [2600, 1675],
+      [2780, 1469],
+      [2866, 1197],
+      [2915, 915],
+      [2936, 630]
+    ],
+  },
+
+  // 新加坡赛道: 57 wps, WP-intersect=0, CR-intersect=1
+
+  {
+    id: "mexico", name: "Mexico City", label: "墨西哥赛道",
+    startWp: 15, finishWp: 19,
+    waypoints: [
+      [-848, 2055],
+      [-564, 2022],
+      [-280, 1987],
+      [3, 1950],
+      [287, 1910],
+      [570, 1869],
+      [852, 1824],
+      [1134, 1777],
+      [1416, 1726],
+      [1696, 1670],
+      [1975, 1607],
+      [2251, 1532],
+      [2520, 1435],
+      [2765, 1292],
+      [2938, 1074],
+      [2988, 798],
+      [2943, 517],
+      [2854, 246],
+      [2748, -20],
+      [2634, -282],
+      [2517, -543],
+      [2398, -803],
+      [2279, -1063],
+      [2161, -1324],
+      [2036, -1581],
+      [1872, -1811],
+      [1647, -1762],
+      [1544, -1496],
+      [1472, -1219],
+      [1385, -947],
+      [1259, -692],
+      [1085, -467],
+      [870, -279],
+      [634, -119],
+      [387, 27],
+      [138, 166],
+      [-115, 300],
+      [-371, 428],
+      [-630, 549],
+      [-890, 668],
+      [-1151, 785],
+      [-1411, 906],
+      [-1666, 1034],
+      [-1915, 1174],
+      [-2154, 1331],
+      [-2386, 1498],
+      [-2627, 1653],
+      [-2863, 1811],
+      [-2831, 2031],
+      [-2559, 2117],
+      [-2275, 2141],
+      [-1989, 2141],
+      [-1703, 2128],
+      [-1418, 2109],
+      [-1133, 2084],
+      [-848, 2055]
+    ],
+  },
+
+  // 墨西哥赛道: 56 wps, WP-intersect=0, CR-intersect=1
+
+  {
+    id: "yas_marina", name: "Yas Marina", label: "阿布扎比赛道",
+    startWp: 37, finishWp: 41,
+    waypoints: [
+      [27, -330],
+      [264, -173],
+      [451, 38],
+      [520, 306],
+      [457, 580],
+      [332, 837],
+      [213, 1096],
+      [131, 1369],
+      [85, 1651],
+      [55, 1935],
+      [24, 2220],
+      [-30, 2499],
+      [-201, 2599],
+      [-341, 2352],
+      [-447, 2087],
+      [-547, 1819],
+      [-643, 1549],
+      [-736, 1279],
+      [-827, 1008],
+      [-916, 737],
+      [-1002, 464],
+      [-1083, 190],
+      [-1157, -86],
+      [-1220, -365],
+      [-1259, -647],
+      [-1254, -932],
+      [-1183, -1206],
+      [-1047, -1456],
+      [-871, -1680],
+      [-673, -1886],
+      [-462, -2078],
+      [-241, -2259],
+      [-12, -2430],
+      [226, -2588],
+      [473, -2732],
+      [731, -2854],
+      [1006, -2923],
+      [1197, -2809],
+      [997, -2615],
+      [744, -2481],
+      [493, -2345],
+      [276, -2164],
+      [131, -1923],
+      [22, -1659],
+      [-144, -1431],
+      [-366, -1252],
+      [-581, -1065],
+      [-666, -805],
+      [-479, -594],
+      [-231, -454],
+      [27, -330]
+    ],
+  },
+
+  // 阿布扎比赛道: 51 wps, WP-intersect=0, CR-intersect=1
+
+  {
+    id: "imola", name: "Imola", label: "伊莫拉赛道",
+    startWp: 40, finishWp: 43,
+    waypoints: [
+      [704, 1361],
+      [413, 1348],
+      [122, 1332],
+      [-169, 1310],
+      [-459, 1276],
+      [-746, 1224],
+      [-1026, 1145],
+      [-1292, 1029],
+      [-1536, 870],
+      [-1751, 674],
+      [-1938, 451],
+      [-2104, 211],
+      [-2256, -38],
+      [-2399, -292],
+      [-2535, -550],
+      [-2661, -812],
+      [-2751, -1088],
+      [-2710, -1364],
+      [-2478, -1520],
+      [-2191, -1561],
+      [-1899, -1555],
+      [-1611, -1512],
+      [-1341, -1403],
+      [-1129, -1204],
+      [-987, -950],
+      [-874, -681],
+      [-729, -430],
+      [-515, -237],
+      [-249, -119],
+      [34, -53],
+      [323, -8],
+      [611, 35],
+      [898, 88],
+      [1181, 159],
+      [1457, 252],
+      [1724, 368],
+      [1981, 505],
+      [2227, 661],
+      [2458, 839],
+      [2655, 1051],
+      [2708, 1319],
+      [2452, 1427],
+      [2161, 1433],
+      [1870, 1419],
+      [1578, 1402],
+      [1287, 1387],
+      [996, 1373],
+      [704, 1361]
+    ],
+  },
+
+  // 伊莫拉赛道: 48 wps, WP-intersect=0, CR-intersect=1
+
+  {
+    id: "zandvoort", name: "Zandvoort", label: "荷兰赛道",
+    startWp: 30, finishWp: 35,
+    waypoints: [
+      [-2131, 708],
+      [-2016, 968],
+      [-1897, 1225],
+      [-1770, 1480],
+      [-1631, 1727],
+      [-1464, 1954],
+      [-1255, 1956],
+      [-1272, 1674],
+      [-1346, 1400],
+      [-1449, 1135],
+      [-1579, 883],
+      [-1717, 635],
+      [-1761, 372],
+      [-1556, 212],
+      [-1277, 176],
+      [-993, 174],
+      [-709, 183],
+      [-425, 199],
+      [-142, 219],
+      [141, 244],
+      [424, 275],
+      [706, 308],
+      [988, 342],
+      [1270, 373],
+      [1553, 394],
+      [1837, 398],
+      [2120, 375],
+      [2395, 307],
+      [2639, 169],
+      [2801, -57],
+      [2835, -334],
+      [2760, -605],
+      [2620, -851],
+      [2433, -1064],
+      [2205, -1232],
+      [1940, -1331],
+      [1672, -1280],
+      [1612, -1022],
+      [1686, -747],
+      [1634, -487],
+      [1390, -358],
+      [1108, -322],
+      [824, -319],
+      [540, -334],
+      [258, -361],
+      [-24, -397],
+      [-305, -441],
+      [-583, -495],
+      [-858, -568],
+      [-1119, -679],
+      [-1342, -853],
+      [-1498, -1090],
+      [-1597, -1356],
+      [-1674, -1629],
+      [-1760, -1900],
+      [-1884, -2155],
+      [-2079, -2360],
+      [-2352, -2413],
+      [-2590, -2274],
+      [-2724, -2029],
+      [-2770, -1750],
+      [-2765, -1466],
+      [-2728, -1185],
+      [-2672, -907],
+      [-2602, -631],
+      [-2521, -359],
+      [-2433, -89],
+      [-2337, 179],
+      [-2237, 444],
+      [-2131, 708]
+    ],
+  },
+
+  // 荷兰赛道: 70 wps, WP-intersect=0, CR-intersect=1
+
+];
+
+// Total circuits: 15
+let currentTrackIdx = 0;
+
 const DIFFICULTY = {
-  EASY:       { label: '简单',   speedMult: 0.70, errorScale: 1.5,  brakeFactor: 0.55, accelFactor: 0.75, cornerSpeed: 0.25 },
-  MEDIUM:     { label: '中等',   speedMult: 0.90, errorScale: 0.6,  brakeFactor: 0.75, accelFactor: 0.90, cornerSpeed: 0.38 },
-  HARD:       { label: '困难',   speedMult: 1.05, errorScale: 0.18, brakeFactor: 0.90, accelFactor: 1.05, cornerSpeed: 0.48 },
-  SUPER_HARD: { label: '超级困难', speedMult: 1.18, errorScale: 0.05, brakeFactor: 1.0,  accelFactor: 1.15, cornerSpeed: 0.58 },
-  HELL:       { label: '地狱级',  speedMult: 1.32, errorScale: 0.01, brakeFactor: 1.0,  accelFactor: 1.25, cornerSpeed: 0.68 },
-  BOSS:       { label: '首领',   speedMult: 1.45, errorScale: 0.001, brakeFactor: 1.0,  accelFactor: 1.35, cornerSpeed: 0.78 },
+  EASY:       { label: '简单',     speedMult: 0.90, errorScale: 1.5,  brakeFactor: 0.6, accelFactor: 0.80, cornerSpeed: 0.62 },
+  MEDIUM:     { label: '中等',     speedMult: 1.00, errorScale: 0.5,  brakeFactor: 0.7, accelFactor: 0.91, cornerSpeed: 0.66 },
+  HARD:       { label: '困难',     speedMult: 1.10, errorScale: 0.2,  brakeFactor: 0.8, accelFactor: 1.02, cornerSpeed: 0.69 },
+  SUPER_HARD: { label: '超级困难',   speedMult: 1.20, errorScale: 0.05, brakeFactor: 0.9, accelFactor: 1.13, cornerSpeed: 0.72 },
+  HELL:       { label: '地狱级',    speedMult: 1.30, errorScale: 0.01, brakeFactor: 1.0, accelFactor: 1.24, cornerSpeed: 0.75 },
+  BOSS:       { label: '首领',     speedMult: 1.40, errorScale: 0.001, brakeFactor: 1.0, accelFactor: 1.35, cornerSpeed: 0.78 },
 };
 let currentDifficulty = DIFFICULTY.MEDIUM;
 
@@ -118,6 +1216,9 @@ function getActiveCars() {
 
 // Focus target — null = show all, or reference to a car
 let focusTarget = null;
+let showTrackSelector = false;
+let trackSelectorPage = 0; // pagination for track selector (15 tracks)
+const TRACKS_PER_PAGE = 4;
 let dualSplit = true; // dual mode: true=split-screen, false=single-view with focusTarget
 
 function getFocusLabel(target) {
@@ -162,70 +1263,167 @@ function cycleFocus() {
 }
 
 // Lap count options
-const LAP_OPTIONS = [3, 5, 8, 10];
+const LAP_OPTIONS = [3, 5, 8];
 let lapOptIdx = 1;
 let raceLaps = LAP_OPTIONS[lapOptIdx];
 
 // ============================================================
 // TRACK
 // ============================================================
-const waypoints = [
-  // === 底部 (向右) — 带减速弯 ===
-  [-2000, 2800], [-1500, 2800], [-1000, 2800],
-  [-500, 2750], [0, 2850],              // 减速弯
-  [500, 2800], [1000, 2800], [1500, 2800],
 
-  // === 右侧 (向上) — S形弯 ===
-  [1800, 2700], [2000, 2500], [2100, 2250],
-  [2100, 2000], [2000, 1750],           // S弯
-  [1900, 1500], [2000, 1250], [2100, 1000],
-
-  // === 顶部 (向左) — 带减速弯 ===
-  [2000, 800], [1500, 800], [1000, 800],
-  [500, 750], [0, 850],                // 减速弯
-  [-500, 800], [-1000, 800], [-1500, 800],
-
-  // === 左侧 (向下) — S形弯 ===
-  [-1800, 900], [-2000, 1100], [-2100, 1350],
-  [-2100, 1600], [-2000, 1850],        // S弯
-  [-1900, 2100], [-2000, 2350], [-2100, 2600],
-];
 
 function catmullRom(t, p0, p1, p2, p3) {
   const t2 = t * t, t3 = t2 * t;
   return 0.5 * ((2 * p1) + (-p0 + p2) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 + (-p0 + 3 * p1 - 3 * p2 + p3) * t3);
 }
 
-const track = [];
-const SEG = 24;
-for (let i = 0; i < waypoints.length; i++) {
-  const i0 = (i - 1 + waypoints.length) % waypoints.length;
-  const i1 = i, i2 = (i + 1) % waypoints.length, i3 = (i + 2) % waypoints.length;
-  for (let j = 0; j < SEG; j++) {
-    const t = j / SEG;
-    track.push({
-      x: catmullRom(t, waypoints[i0][0], waypoints[i1][0], waypoints[i2][0], waypoints[i3][0]),
-      y: catmullRom(t, waypoints[i0][1], waypoints[i1][1], waypoints[i2][1], waypoints[i3][1]),
-    });
+// Precompute track preview data for the selector minimaps
+const TRACK_PREVIEWS = TRACK_DATA.map(td => {
+  const pts = [];
+  const nWp = td.waypoints.length;
+  for (let i = 0; i < nWp; i++) {
+    const i0 = (i-1+nWp)%nWp, i1=i, i2=(i+1)%nWp, i3=(i+2)%nWp;
+    for (let j = 0; j < 12; j++) {
+      const t = j/12;
+      pts.push({ x: catmullRom(t, td.waypoints[i0][0], td.waypoints[i1][0], td.waypoints[i2][0], td.waypoints[i3][0]), y: catmullRom(t, td.waypoints[i0][1], td.waypoints[i1][1], td.waypoints[i2][1], td.waypoints[i3][1]) });
+    }
+  }
+  for (let i = 0; i < pts.length; i++) {
+    const next = pts[(i+1)%pts.length];
+    const dx = next.x - pts[i].x, dy = next.y - pts[i].y, len = Math.sqrt(dx*dx+dy*dy);
+    if (len > 0.001) { pts[i].tx = dx/len; pts[i].ty = dy/len; pts[i].nx = pts[i].ty; pts[i].ny = -pts[i].tx; }
+    else { pts[i].tx = 0; pts[i].ty = -1; pts[i].nx = -1; pts[i].ny = 0; }
+  }
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const p of pts) {
+    if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
+    if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
+  }
+  const hw = 110;
+  return { ...td, previewPts: pts, bounds: { minX: minX-hw, maxX: maxX+hw, minY: minY-hw, maxY: maxY+hw } };
+});
+
+// ============================================================
+// TRACK GENERATION — build track from TRACK_DATA
+// ============================================================
+function generateTrack(trackData) {
+  // Step 1: Replace waypoints
+  waypoints = trackData.waypoints.slice();
+
+  // Step 2: Rebuild track array
+  const nWp = waypoints.length;
+  const newTrack = [];
+  for (let i = 0; i < nWp; i++) {
+    const i0 = (i - 1 + nWp) % nWp, i1 = i, i2 = (i + 1) % nWp, i3 = (i + 2) % nWp;
+    for (let j = 0; j < SEG; j++) {
+      const t = j / SEG;
+      newTrack.push({
+        x: catmullRom(t, waypoints[i0][0], waypoints[i1][0], waypoints[i2][0], waypoints[i3][0]),
+        y: catmullRom(t, waypoints[i0][1], waypoints[i1][1], waypoints[i2][1], waypoints[i3][1]),
+      });
+    }
+  }
+  track = newTrack;
+
+  // Step 3: Compute segment lengths, tangents, normals
+  totalLen = 0;
+  for (let i = 0; i < track.length; i++) {
+    const p = track[i], next = track[(i + 1) % track.length];
+    const dx = next.x - p.x, dy = next.y - p.y, len = Math.sqrt(dx * dx + dy * dy);
+    if (len > 0.001) { p.tx = dx / len; p.ty = dy / len; p.nx = p.ty; p.ny = -p.tx; }
+    else { p.tx = p.ty = p.nx = p.ny = 0; }
+    p.dist = totalLen; totalLen += len;
+  }
+  track.forEach(p => p.totalLen = totalLen);
+
+  // Step 4: Compute start/finish grid constants
+  startIdx = trackData.startWp * SEG;
+  finishIdx = trackData.finishWp * SEG;
+  stHeading = Math.atan2(track[startIdx].tx, -track[startIdx].ty);
+  stX = track[startIdx].x; stY = track[startIdx].y;
+  stNX = track[startIdx].nx * 28; stNY = track[startIdx].ny * 28;
+  stBX = -Math.sin(stHeading) * 126; stBY = Math.cos(stHeading) * 126;
+
+  // Step 5: Recompute racing line and speed profile
+  racingLine = [];
+  speedProfile = [];
+  computeRacingLineAndProfile();
+
+  // Step 6: Recompute track bounds for minimap
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const p of track) {
+    if (p.x < minX) minX = p.x;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.y > maxY) maxY = p.y;
+  }
+  const pad = CFG.trackWidth;
+  trackBounds = { minX: minX - pad, maxX: maxX + pad, minY: minY - pad, maxY: maxY + pad };
+
+  // Step 7: Regenerate grass blades
+  grassBlades = [];
+  for (let i = 0; i < 4000; i++) {
+    grassBlades.push({ x: (Math.random() - 0.5) * 16000, y: (Math.random() - 0.5) * 12000, r: Math.random() * 3 + 1 });
   }
 }
 
-let totalLen = 0;
-for (let i = 0; i < track.length; i++) {
-  const p = track[i], next = track[(i + 1) % track.length];
-  const dx = next.x - p.x, dy = next.y - p.y, len = Math.sqrt(dx * dx + dy * dy);
-  if (len > 0.001) { p.tx = dx / len; p.ty = dy / len; p.nx = p.ty; p.ny = -p.tx; }
-  else { p.tx = p.ty = p.nx = p.ny = 0; }
-  p.dist = totalLen; totalLen += len;
-}
-track.forEach(p => p.totalLen = totalLen);
 
-// ---------- racing line & optimal speed profile ----------
-// Uses Menger curvature + forward-backward min-time pass (mature racing game AI approach)
+const SEG = 24;
+let waypoints, track, totalLen, trackBounds, grassBlades;
+let startIdx, finishIdx, stHeading, stX, stY, stNX, stNY, stBX, stBY;
+
 let racingLine = [];
 let speedProfile = [];
 
+// ---------- tire marks ----------
+const tireMarks = [];
+const MAX_MARKS = 2500;
+function addTireMark(x, y) { if (tireMarks.length >= MAX_MARKS) tireMarks.shift(); tireMarks.push({ x, y, a: 0.5 }); }
+
+// ---------- brake marks (fade over 5 seconds) ----------
+const brakeMarks = [];
+const BRAKE_DURATION = 5;
+const MAX_BRAKE_MARKS = 3000;
+function addBrakeMark(x, y) {
+  if (brakeMarks.length >= MAX_BRAKE_MARKS) brakeMarks.shift();
+  brakeMarks.push({ x, y, life: BRAKE_DURATION });
+}
+function updateBrakeMarks(dt) {
+  for (let i = brakeMarks.length - 1; i >= 0; i--) {
+    brakeMarks[i].life -= dt;
+    if (brakeMarks[i].life <= 0) brakeMarks.splice(i, 1);
+  }
+}
+function drawBrakeMarks() {
+  ctx.fillStyle = '#1a1a1a';
+  for (const m of brakeMarks) {
+    const a = Math.min(1, m.life / (BRAKE_DURATION * 0.4));
+    ctx.globalAlpha = a * 0.55;
+    ctx.beginPath(); ctx.arc(m.x, m.y, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
+// ---------- sparks ----------
+const sparks = [];
+function emitSparks(x, y, count) {
+  for (let i = 0; i < count; i++) {
+    const a = Math.random() * Math.PI * 2, sp = 60 + Math.random() * 180;
+    const life = 0.2 + Math.random() * 0.4;
+    sparks.push({ x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, life, maxLife: life });
+  }
+}
+function updateSparks(dt) {
+  for (let i = sparks.length - 1; i >= 0; i--) {
+    const s = sparks[i]; s.x += s.vx * dt; s.y += s.vy * dt; s.life -= dt;
+    if (s.life <= 0) sparks.splice(i, 1);
+  }
+}
+
 function computeRacingLineAndProfile() {
+  racingLine = [];
+  speedProfile = [];
   const n = track.length;
   if (n === 0) return;
   const maxOff = CFG.trackWidth * 0.40;
@@ -328,94 +1526,25 @@ function computeRacingLineAndProfile() {
   speedProfile = vBwd;
 }
 
-// ---------- track bounds for minimap ----------
-const trackBounds = (function() {
-  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-  for (const p of track) {
-    if (p.x < minX) minX = p.x;
-    if (p.x > maxX) maxX = p.x;
-    if (p.y < minY) minY = p.y;
-    if (p.y > maxY) maxY = p.y;
-  }
-  const pad = CFG.trackWidth;
-  return { minX: minX - pad, maxX: maxX + pad, minY: minY - pad, maxY: maxY + pad };
-})();
-
-// ---------- grass ----------
-const grassBlades = [];
-for (let i = 0; i < 4000; i++) grassBlades.push({ x: (Math.random() - 0.5) * 16000, y: (Math.random() - 0.5) * 12000, r: Math.random() * 3 + 1 });
-
-// ---------- tire marks ----------
-const tireMarks = [];
-const MAX_MARKS = 2500;
-function addTireMark(x, y) { if (tireMarks.length >= MAX_MARKS) tireMarks.shift(); tireMarks.push({ x, y, a: 0.5 }); }
-
-// ---------- brake marks (fade over 5 seconds) ----------
-const brakeMarks = [];
-const BRAKE_DURATION = 5;
-const MAX_BRAKE_MARKS = 3000;
-function addBrakeMark(x, y) {
-  if (brakeMarks.length >= MAX_BRAKE_MARKS) brakeMarks.shift();
-  brakeMarks.push({ x, y, life: BRAKE_DURATION });
-}
-function updateBrakeMarks(dt) {
-  for (let i = brakeMarks.length - 1; i >= 0; i--) {
-    brakeMarks[i].life -= dt;
-    if (brakeMarks[i].life <= 0) brakeMarks.splice(i, 1);
-  }
-}
-function drawBrakeMarks() {
-  ctx.fillStyle = '#1a1a1a';
-  for (const m of brakeMarks) {
-    const a = Math.min(1, m.life / (BRAKE_DURATION * 0.4)); // full opacity for first 3s, fade last 2s
-    ctx.globalAlpha = a * 0.55;
-    ctx.beginPath(); ctx.arc(m.x, m.y, 2.5, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  ctx.globalAlpha = 1;
-}
-
-// ---------- sparks ----------
-const sparks = [];
-function emitSparks(x, y, count) {
-  for (let i = 0; i < count; i++) {
-    const a = Math.random() * Math.PI * 2, sp = 60 + Math.random() * 180;
-    const life = 0.2 + Math.random() * 0.4;
-    sparks.push({ x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, life, maxLife: life });
-  }
-}
-function updateSparks(dt) {
-  for (let i = sparks.length - 1; i >= 0; i--) {
-    const s = sparks[i]; s.x += s.vx * dt; s.y += s.vy * dt; s.life -= dt;
-    if (s.life <= 0) sparks.splice(i, 1);
-  }
-}
-
-// ============================================================
-// START GRID
-// ============================================================
-const startIdx = Math.floor(1 * SEG);
-const finishIdx = Math.floor(6 * SEG); // finish line ahead of the grid, on the straight
-const stHeading = Math.atan2(track[startIdx].tx, -track[startIdx].ty);
-const stX = track[startIdx].x, stY = track[startIdx].y;
-const stNX = track[startIdx].nx * 28, stNY = track[startIdx].ny * 28;
-const stBX = -Math.sin(stHeading) * 126, stBY = Math.cos(stHeading) * 126; // backward offset (half-car gap)
-
+generateTrack(TRACK_DATA[0]);
+document.getElementById('btnTrack').textContent = '⚇ ' + TRACK_DATA[0].label;
 // ============================================================
 // CARS
 // ============================================================
 const p1 = {
   x: 0, y: 0, speed: 0, heading: 0, lapCount: 0, lastSector: -1, onTrack: true, blocked: false, braking: false,
   color: '#dc0000', accent: '#ffd700', num: '16', lapCooldown: 0, lapTime: 0, lapStartTime: 0,
-  keys: { up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight' },
+  keys: { up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight', drs: 'Alt' },
   offTrackTimer: 0, _prevIdx: 0, _hasWrapped: false, slipstreamTimer: 0, slipStreamBoost: 0,
+  drsActive: false, drsTimer: 0, drsCooldown: 0, hadOfftrack: false, hadCollision: false, lastLapClean: false,
 };
 
 const p2 = {
   x: 0, y: 0, speed: 0, heading: 0, lapCount: 0, lastSector: -1, onTrack: true, blocked: false, braking: false,
   color: '#00d2be', accent: '#c0c0c0', num: '01', lapCooldown: 0, lapTime: 0, lapStartTime: 0,
-  keys: { up: 'w', down: 's', left: 'a', right: 'd' },
+  keys: { up: 'w', down: 's', left: 'a', right: 'd', drs: ' ' },
   offTrackTimer: 0, _prevIdx: 0, _hasWrapped: false, slipstreamTimer: 0, slipStreamBoost: 0,
+  drsActive: false, drsTimer: 0, drsCooldown: 0, hadOfftrack: false, hadCollision: false, lastLapClean: false,
 };
 
 const a1 = {
@@ -423,6 +1552,7 @@ const a1 = {
   color: '#1e3a5f', accent: '#ff1e00', num: '44', lapCooldown: 0, lapTime: 0, lapStartTime: 0,
   errDrift: 0, errTimer: 0, trackIdx: 0, prevSpeed: 0, lineBias: 0,
   offTrackTimer: 0, _prevIdx: 0, _hasWrapped: false, slipstreamTimer: 0, slipStreamBoost: 0,
+  drsActive: false, drsTimer: 0, drsCooldown: 0, hadOfftrack: false, hadCollision: false, lastLapClean: false,
 };
 
 const a2 = {
@@ -430,6 +1560,7 @@ const a2 = {
   color: '#ff7300', accent: '#002147', num: '77', lapCooldown: 0, lapTime: 0, lapStartTime: 0,
   errDrift: 0, errTimer: 0, trackIdx: 0, prevSpeed: 0, lineBias: 0.12,
   offTrackTimer: 0, _prevIdx: 0, _hasWrapped: false, slipstreamTimer: 0, slipStreamBoost: 0,
+  drsActive: false, drsTimer: 0, drsCooldown: 0, hadOfftrack: false, hadCollision: false, lastLapClean: false,
 };
 
 // ============================================================
@@ -464,6 +1595,8 @@ function initPositions() {
     c.lapCount = 0; c.lastSector = -1; c.blocked = true;
     c.lapCooldown = 0; c.lapTime = 0; c.lapStartTime = 0;
     c.onTrack = true; c.braking = false; c.offTrackTimer = 0;
+    c.drsActive = false; c.drsTimer = 0; c.drsCooldown = 0;
+    c.hadOfftrack = false; c.hadCollision = false; c.lastLapClean = false;
     if (c.trackIdx !== undefined) { c.trackIdx = startIdx; c.errDrift = 0; c.errTimer = 0; c.prevSpeed = 0; }
   }
 
@@ -528,11 +1661,34 @@ function updatePlayer(car, dt) {
   if (!car.blocked) {
     if (keyState[km.up]) {
       if (car.speed < 0) car.speed += CFG.brake * dt;
-      else car.speed = Math.min(car.speed + CFG.accel * dt, 400 + (car.slipStreamBoost || 0));
+      else {
+        const drsBoostAmt = car.drsActive ? DRS_BOOST : 0;
+        car.speed = Math.min(car.speed + CFG.accel * dt, 400 + (car.slipStreamBoost || 0) + drsBoostAmt);
+      }
     }
-    if (keyState[km.down]) {
+    if (keyState[km.down] || keyState[' ']) {
       if (car.speed > 0) car.speed = Math.max(car.speed - CFG.brake * dt, 0);
       else car.speed -= CFG.accel * 0.4 * dt;
+    }
+  }
+
+  // === DRS ===
+  if (!car.blocked && race.phase === 'RACING') {
+    // Cooldown decay
+    if (car.drsCooldown > 0) { car.drsCooldown -= dt; if (car.drsCooldown < 0) car.drsCooldown = 0; }
+    // Active timer
+    if (car.drsActive) {
+      car.drsTimer -= dt;
+      if (car.drsTimer <= 0) { car.drsActive = false; car.drsTimer = 0; }
+    }
+    // DRS activation: key pressed + on straight + cooldown done + not already active
+    if (keyState[km.drs]) {
+      const n = nearestTrackPoint(car.x, car.y);
+      if (speedProfile[n.idx] > DRS_STRAIGHT_THRESHOLD && car.drsCooldown <= 0 && !car.drsActive) {
+        car.drsActive = true;
+        car.drsTimer = DRS_DURATION;
+        car.drsCooldown = car.lastLapClean ? DRS_COOLDOWN_CLEAN : DRS_COOLDOWN;
+      }
     }
   }
 
@@ -625,7 +1781,8 @@ function updateAI(car, dt) {
   // === Speed control using centerline speed profile ===
   if (car.onTrack) {
     car.braking = false;
-    const diffMax = Math.min(CFG.maxSpeed * diff.speedMult, 600 + (car.slipStreamBoost || 0));
+    const drsBoostAmt = car.drsActive ? DRS_BOOST : 0;
+    const diffMax = Math.min(CFG.maxSpeed * diff.speedMult, 600 + (car.slipStreamBoost || 0) + drsBoostAmt);
     const scanAheadSteps = 10 + Math.min(Math.floor(car.speed * 3.0 / avgSegLen), track.length * 0.30);
     let minProfileSpd = Infinity;
     for (let i = 5; i < scanAheadSteps; i += 3) {
@@ -649,6 +1806,18 @@ function updateAI(car, dt) {
     car.speed -= CFG.drag * (car.speed / CFG.maxSpeed) * dt;
     if (car.speed < 0) car.speed = 0;
     if (car.speed > diffMax) car.speed = diffMax;
+
+    // === DRS for AI ===
+    if (car.drsCooldown > 0) { car.drsCooldown -= dt; if (car.drsCooldown < 0) car.drsCooldown = 0; }
+    if (car.drsActive) {
+      car.drsTimer -= dt;
+      if (car.drsTimer <= 0) { car.drsActive = false; car.drsTimer = 0; }
+    }
+    if (speedProfile[car.trackIdx] > DRS_STRAIGHT_THRESHOLD && car.drsCooldown <= 0 && !car.drsActive && car.speed > 300) {
+      car.drsActive = true;
+      car.drsTimer = DRS_DURATION;
+      car.drsCooldown = car.lastLapClean ? DRS_COOLDOWN_CLEAN : DRS_COOLDOWN;
+    }
   } else {
     car.braking = true;
     car.prevSpeed = car.speed;
@@ -674,6 +1843,8 @@ function checkCollisions() {
         a.speed -= relV; if (a.speed < 0) a.speed = 0;
         b.speed += relV * 0.6; if (b.speed < 0) b.speed = 0;
         emitSparks((a.x + b.x) / 2, (a.y + b.y) / 2, 12);
+        a.hadCollision = true;
+        b.hadCollision = true;
       }
     }
   }
@@ -684,6 +1855,7 @@ function checkCollisions() {
 // ============================================================
 function startCountdown() {
   if (race.phase === 'RACING' || race.phase === 'COUNTDOWN') return;
+  showTrackSelector = false;
   computeRacingLineAndProfile();
   initPositions();
   race.phase = 'COUNTDOWN';
@@ -862,6 +2034,43 @@ function drawSlipstream(car) {
     ctx.beginPath();
     ctx.arc(px, py, 2 + Math.random() * 3, 0, Math.PI * 2);
     ctx.fillStyle = `rgba(100, 200, 255, ${0.3 * intensity * (1 - t)})`;
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawDRS(car) {
+  if (!car.drsActive) return;
+  const intensity = Math.min(1, car.drsTimer / 1.5);
+  const len = 20 + intensity * 40;
+  const w = 4 + intensity * 10;
+  const cosH = Math.cos(car.heading), sinH = Math.sin(car.heading);
+  // Rear of car body
+  const rx = car.x - sinH * 42, ry = car.y + cosH * 42;
+  const ex = rx - sinH * len, ey = ry + cosH * len;
+  const hw = w / 2, fw = hw * 0.3;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(rx + cosH * hw, ry + sinH * hw);
+  ctx.lineTo(rx - cosH * hw, ry - sinH * hw);
+  ctx.lineTo(ex - cosH * fw, ey - sinH * fw);
+  ctx.lineTo(ex + cosH * fw, ey + sinH * fw);
+  ctx.closePath();
+  const grad = ctx.createLinearGradient(rx, ry, ex, ey);
+  grad.addColorStop(0, `rgba(0, 220, 0, ${0.4 * intensity})`);
+  grad.addColorStop(1, 'rgba(0, 220, 0, 0)');
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  // Green particles
+  for (let i = 0; i < 3; i++) {
+    const t = Math.random();
+    const px = rx + (ex - rx) * t + (Math.random() - 0.5) * w;
+    const py = ry + (ey - ry) * t + (Math.random() - 0.5) * w;
+    ctx.beginPath();
+    ctx.arc(px, py, 1.5 + Math.random() * 2.5, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(0, 220, 0, ${0.3 * intensity * (1 - t)})`;
     ctx.fill();
   }
   ctx.restore();
@@ -1203,6 +2412,50 @@ function drawHUD() {
     }
   }
 
+  // ---- DRS status indicator ----
+  const drsCars = gameSettings.mode === 'dual' ? [p1, p2] : [p1];
+  for (const dc of drsCars) {
+    let drsText = '';
+    let drsColor = '';
+    if (dc.drsActive) {
+      drsText = `[DRS ${dc.drsTimer.toFixed(1)}s]`;
+      drsColor = '#00ff44';
+    } else if (dc.drsCooldown > 0) {
+      drsText = `[DRS CD ${dc.drsCooldown.toFixed(1)}s]`;
+      drsColor = '#ff4444';
+    } else {
+      const dn = nearestTrackPoint(dc.x, dc.y);
+      if (speedProfile[dn.idx] > DRS_STRAIGHT_THRESHOLD) {
+        drsText = '[DRS]';
+        drsColor = dc.lastLapClean ? '#00ddff' : '#ffcc00';
+      }
+    }
+    if (drsText) {
+      const drsY = 100;
+      if (gameSettings.mode === 'dual' && dualSplit) {
+        ctx.fillStyle = drsColor; ctx.font = 'bold 10px "Courier New",monospace'; ctx.textAlign = 'center';
+        ctx.fillText(drsText, dc === p1 ? 83 : W - 83, drsY);
+      } else if (dc === p1) {
+        ctx.fillStyle = drsColor; ctx.font = 'bold 10px "Courier New",monospace'; ctx.textAlign = 'center';
+        ctx.fillText(drsText, 83, drsY);
+      }
+    }
+  }
+
+  // ---- Clean lap badge ----
+  for (const cc of drsCars) {
+    if (cc.lastLapClean) {
+      const cleanY = 112;
+      if (gameSettings.mode === 'dual' && dualSplit) {
+        ctx.fillStyle = '#00ff88'; ctx.font = 'bold 9px "Courier New",monospace'; ctx.textAlign = 'center';
+        ctx.fillText('[干净圈]', cc === p1 ? 83 : W - 83, cleanY);
+      } else if (cc === p1) {
+        ctx.fillStyle = '#00ff88'; ctx.font = 'bold 9px "Courier New",monospace'; ctx.textAlign = 'center';
+        ctx.fillText('[干净圈]', 83, cleanY);
+      }
+    }
+  }
+
   // Camera focus indicator (not shown in split-screen dual mode)
   if (!dualSplit) {
     roundRect(ctx, W-120, infoY+32, 104, 26, 4); ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fill();
@@ -1285,6 +2538,7 @@ function renderView(ox, oy, vw, vh, camObj, zoomVal, camPlayer) {
   for (const c of getActiveCars()) {
     drawWake(c);
     drawSlipstream(c);
+    drawDRS(c);
     drawCar(c.x, c.y, c.heading, c);
   }
 
@@ -1438,6 +2692,108 @@ function updateSlipstream(car, dt) {
     }
   }
 }
+
+// ============================================================
+// TRACK SELECTOR — full-screen overlay with minimap previews
+// ============================================================
+function renderTrackSelector() {
+  // Dim overlay
+  ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(0, 0, W, H);
+
+  const cols = TRACKS_PER_PAGE, cardW = 260, cardH = 270, gap = 30;
+  const totalW = cols * cardW + (cols-1) * gap;
+  const ox = (W - totalW) / 2, oy = (H - cardH) / 2;
+  const totalPages = Math.ceil(TRACK_PREVIEWS.length / TRACKS_PER_PAGE);
+  const offset = trackSelectorPage * TRACKS_PER_PAGE;
+
+  // Title
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 26px "Courier New",monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+  ctx.fillText('选择赛道', W/2, oy - 16);
+
+  // Page indicator
+  ctx.fillStyle = '#888'; ctx.font = '14px "Courier New",monospace'; ctx.textAlign = 'center';
+  ctx.fillText(`第 ${trackSelectorPage+1}/${totalPages} 页`, W/2, oy + cardH + 28);
+
+  // Prev arrow
+  if (trackSelectorPage > 0) {
+    const arrX = ox - 60, arrY = oy + cardH/2 - 25, arrS = 50;
+    const hover = mouseX >= arrX && mouseX <= arrX + arrS && mouseY >= arrY && mouseY <= arrY + arrS;
+    ctx.fillStyle = hover ? '#ffcc00' : 'rgba(255,255,255,0.4)';
+    ctx.font = 'bold 40px "Courier New",monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('◀', arrX + arrS/2, arrY + arrS/2);
+  }
+
+  // Next arrow
+  if (trackSelectorPage < totalPages - 1) {
+    const arrX = ox + totalW + 10, arrY = oy + cardH/2 - 25, arrS = 50;
+    const hover = mouseX >= arrX && mouseX <= arrX + arrS && mouseY >= arrY && mouseY <= arrY + arrS;
+    ctx.fillStyle = hover ? '#ffcc00' : 'rgba(255,255,255,0.4)';
+    ctx.font = 'bold 40px "Courier New",monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('▶', arrX + arrS/2, arrY + arrS/2);
+  }
+
+  for (let i = 0; i < cols && offset + i < TRACK_PREVIEWS.length; i++) {
+    const idx = offset + i;
+    const cx = ox + i * (cardW + gap), cy = oy;
+    const hover = mouseX >= cx && mouseX <= cx + cardW && mouseY >= cy && mouseY <= cy + cardH;
+
+    // Card bg
+    roundRect(ctx, cx, cy, cardW, cardH, 10);
+    ctx.fillStyle = hover ? 'rgba(50,50,80,0.95)' : 'rgba(30,30,50,0.9)';
+    ctx.fill();
+    ctx.strokeStyle = hover ? '#ffcc00' : 'rgba(255,255,255,0.15)';
+    ctx.lineWidth = hover ? 2.5 : 1.5;
+    ctx.stroke();
+    if (idx === currentTrackIdx) {
+      ctx.strokeStyle = '#44ff44'; ctx.lineWidth = 2;
+      ctx.setLineDash([5,4]); ctx.strokeRect(cx+4, cy+4, cardW-8, cardH-8);
+      ctx.setLineDash([]);
+    }
+
+    // Minimap area
+    const td = TRACK_PREVIEWS[idx];
+    const b = td.bounds, bw = b.maxX - b.minX, bh = b.maxY - b.minY;
+    const mw = cardW - 40, mh = cardH - 90;
+    const scale = Math.min(mw / bw, mh / bh);
+    const mmW = bw * scale, mmH = bh * scale;
+    const mmX = cx + (cardW - mmW)/2, mmY = cy + 16;
+    const hw = 110;
+
+    // Track surface
+    ctx.beginPath();
+    for (let j = 0; j < td.previewPts.length; j++) {
+      const p = td.previewPts[j];
+      const sx = mmX + (p.x + p.nx * hw - b.minX) * scale;
+      const sy = mmY + (p.y + p.ny * hw - b.minY) * scale;
+      j === 0 ? ctx.moveTo(sx, sy) : ctx.lineTo(sx, sy);
+    }
+    for (let j = td.previewPts.length - 1; j >= 0; j--) {
+      const p = td.previewPts[j];
+      const sx = mmX + (p.x - p.nx * hw - b.minX) * scale;
+      const sy = mmY + (p.y - p.ny * hw - b.minY) * scale;
+      ctx.lineTo(sx, sy);
+    }
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(60,60,60,0.85)'; ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.15)'; ctx.lineWidth = 1; ctx.stroke();
+
+    // Center line
+    ctx.strokeStyle = 'rgba(255,255,255,0.3)'; ctx.lineWidth = 0.5;
+    ctx.beginPath();
+    for (let j = 0; j < td.previewPts.length; j++) {
+      const p = td.previewPts[j];
+      const sx = mmX + (p.x - b.minX) * scale, sy = mmY + (p.y - b.minY) * scale;
+      j === 0 ? ctx.moveTo(sx, sy) : ctx.lineTo(sx, sy);
+    }
+    ctx.closePath(); ctx.stroke();
+
+    // Track name
+    ctx.fillStyle = hover ? '#ffcc00' : '#ccc';
+    ctx.font = 'bold 16px "Courier New",monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+    ctx.fillText(td.label, cx + cardW/2, cy + cardH - 16);
+  }
+}
+
 // MAIN LOOP
 // ============================================================
 let lastTime = 0;
@@ -1447,8 +2803,9 @@ function gameLoop(time) {
     const dt = lastTime ? (time - lastTime) / 1000 : 0.016;
     lastTime = time;
 
-    updateCountdown(dt);
-    if (race.phase === 'RACING') race.elapsedTime += dt;
+    if (!showTrackSelector) {
+      updateCountdown(dt);
+      if (race.phase === 'RACING') race.elapsedTime += dt;
 
     // Update all players
     updatePlayer(p1, dt);
@@ -1470,6 +2827,7 @@ function gameLoop(time) {
       for (const c of getActiveCars()) {
         const n = nearestTrackPoint(c.x, c.y);
         if (n.dist > CFG.trackWidth * 0.55) {
+          c.hadOfftrack = true;
           c.offTrackTimer += dt;
           if (c.offTrackTimer > 1.0) {
             c.x = n.point.x; c.y = n.point.y;
@@ -1479,6 +2837,8 @@ function gameLoop(time) {
             c._prevIdx = n.idx;
             // If car had already wrapped but respawns past finish line, count the lap immediately
             if (c._hasWrapped && n.idx >= finishIdx && c.lapCooldown <= 0) {
+              c.lastLapClean = !c.hadOfftrack && !c.hadCollision;
+              c.hadOfftrack = false; c.hadCollision = false;
               c.lapCount++;
               c.lapCooldown = 1.5;
               c.lapTime = race.elapsedTime - c.lapStartTime;
@@ -1504,6 +2864,8 @@ function gameLoop(time) {
           }
           // Lap counted when car crosses finishIdx after wrapping around
           if (c._hasWrapped && n.idx > c._prevIdx && c._prevIdx < finishIdx && n.idx >= finishIdx && c.lapCooldown <= 0) {
+            c.lastLapClean = !c.hadOfftrack && !c.hadCollision;
+            c.hadOfftrack = false; c.hadCollision = false;
             c.lapCount++;
             c.lapCooldown = 1.5;
             c.lapTime = race.elapsedTime - c.lapStartTime;
@@ -1555,6 +2917,7 @@ function gameLoop(time) {
       } else {
         c._brakeLX = c._brakeLY = c._brakeRX = c._brakeRY = undefined;
       }
+    }
     }
 
     // Camera and render
@@ -1614,6 +2977,8 @@ function gameLoop(time) {
     drawCountdownLights();
     drawMinimap();
 
+    if (showTrackSelector) renderTrackSelector();
+
   } catch (e) {
     console.error('Game error:', e);
   }
@@ -1624,15 +2989,21 @@ function gameLoop(time) {
 // ============================================================
 // CONTROLS
 // ============================================================
-window.__k1 = {}; // Player 1 — Arrow keys
-window.__k2 = {}; // Player 2 — WASD
+window.__k1 = {}; // Player 1 — Arrow keys + Alt (DRS)
+window.__k2 = {}; // Player 2 — WASD + Space (DRS/brake)
 window.addEventListener('keydown', e => {
   if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)) { e.preventDefault(); window.__k1[e.key] = true; }
   if (['w','W','a','A','s','S','d','D'].includes(e.key)) { e.preventDefault(); window.__k2[e.key.toLowerCase()] = true; }
+  // DRS / brake keys
+  if (e.key === 'Alt') { e.preventDefault(); window.__k1.Alt = true; }
+  if (e.key === ' ') { e.preventDefault(); window.__k2[' '] = true; }
 });
 window.addEventListener('keyup', e => {
   if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)) { e.preventDefault(); window.__k1[e.key] = false; }
   if (['w','W','a','A','s','S','d','D'].includes(e.key)) { e.preventDefault(); window.__k2[e.key.toLowerCase()] = false; }
+  // DRS / brake keys
+  if (e.key === 'Alt') { e.preventDefault(); window.__k1.Alt = false; }
+  if (e.key === ' ') { e.preventDefault(); window.__k2[' '] = false; }
 });
 
 // ============================================================
@@ -1711,6 +3082,11 @@ document.getElementById('btnLaps').addEventListener('click', () => {
   document.getElementById('btnLaps').textContent = '圈数: ' + raceLaps;
 });
 
+document.getElementById('btnTrack').addEventListener('click', () => {
+  if (race.phase === 'RACING' || race.phase === 'COUNTDOWN') return;
+  showTrackSelector = !showTrackSelector;
+});
+
 // ============================================================
 // START
 // ============================================================
@@ -1718,3 +3094,4 @@ gameLoop(0);
 </script>
 </body>
 </html>
+
