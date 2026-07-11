@@ -1,1 +1,3 @@
-.hammer/
+dev/
+versions/
+.DS_Store

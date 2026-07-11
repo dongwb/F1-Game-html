@@ -2,28 +2,30 @@
 
 ## 项目概述
 
-一个基于 Canvas 的 F1 赛车游戏，支持双人对战、AI 对战、6 级难度、完整赛道圈数统计、发车灯倒计时等真实赛车要素。全部代码包含在单个 `index.html` 文件中。
+一个基于 Canvas 的 F1 赛车游戏，支持双人对战、AI 对战、6 级难度、15 条真实 F1 赛道、DRS 加速系统、完全圈数统计等真实赛车要素。全部代码包含在单个 `index.html` 文件中。
 
 - **技术栈**: 纯前端 HTML5 Canvas + JavaScript（无外部依赖）
-- **核心玩法**: 方向盘控制、速度/档位模拟、圈数计时、赛道边缘检测与重设
-- **AI 系统**: Pure Pursuit + Cross-track Correction + 曲率速度剖面 + 比例速度控制
+- **核心玩法**: 方向盘控制、速度/档位模拟、圈数计时、DRS 加速、赛道边缘检测与重设
+- **AI 系统**: Pure Pursuit + 曲率速度剖面 + 比例速度控制
+- **赛道数据**: 15 条无交叉的真实 F1 赛道，基于 meijersa/f1-circuits GeoJSON 数据集生成
 
 ---
 
 ## 目录
 
 1. [配置系统](#1-配置系统)
-2. [赛道生成与几何](#2-赛道生成与几何)
+2. [赛道系统](#2-赛道系统)
 3. [赛车物理](#3-赛车物理)
-4. [玩家控制](#4-玩家控制)
+4. [玩家控制与 DRS](#4-玩家控制与-drs)
 5. [AI 驾驶系统](#5-ai-驾驶系统)
 6. [速度剖面预计算](#6-速度剖面预计算)
 7. [发车与比赛流程](#7-发车与比赛流程)
 8. [碰撞系统](#8-碰撞系统)
 9. [尾流/滑流系统](#9-尾流滑流系统)
-10. [渲染系统](#10-渲染系统)
-11. [HUD 与 UI](#11-hud-与-ui)
-12. [开发流程与演进历史](#12-开发流程与演进历史)
+10. [DRS 减阻系统](#10-drs-减阻系统)
+11. [渲染系统](#11-渲染系统)
+12. [HUD 与 UI](#12-hud-与-ui)
+13. [开发流程与演进历史](#13-开发流程与演进历史)
 
 ---
 
@@ -44,23 +46,41 @@ const CFG = {
 };
 ```
 
+### DRS 常量
+
+```javascript
+const DRS_BOOST = 45;              // DRS 速度加成
+const DRS_DURATION = 3.0;          // DRS 持续时长（秒）
+const DRS_COOLDOWN = 10.0;         // 正常冷却（秒）
+const DRS_COOLDOWN_CLEAN = 5.0;    // 干净圈冷却（秒）
+const DRS_STRAIGHT_THRESHOLD = 600; // 直道判定阈值（速度剖面值）
+```
+
 ### 难度等级 (`DIFFICULTY`)
 
-6 级难度通过 5 个参数调节 AI 性能：
+6 级难度等距梯度，通过 5 个参数调节 AI 性能：
 
-| 等级 | speedMult | errorScale | brakeFactor | accelFactor | cornerSpeed |
-|------|-----------|------------|-------------|-------------|-------------|
-| 简单 | 0.70 | 1.5 | 0.55 | 0.75 | 0.25 |
-| 中等 | 0.90 | 0.6 | 0.75 | 0.90 | 0.38 |
-| 困难 | 1.05 | 0.18 | 0.90 | 1.05 | 0.48 |
-| 超级困难 | 1.18 | 0.05 | 1.0 | 1.15 | 0.58 |
-| 地狱级 | 1.32 | 0.01 | 1.0 | 1.25 | 0.68 |
-| BOSS | 1.45 | 0.001 | 1.0 | 1.35 | 0.78 |
+| 等级 | speedMult | cornerSpeed | accelFactor | brakeFactor | errorScale |
+|------|-----------|-------------|-------------|-------------|------------|
+| 简单 | 0.90 | 0.62 (80%) | 0.80 | 0.6 | 1.5 |
+| 中等 | 1.00 | 0.66 (85%) | 0.91 | 0.7 | 0.5 |
+| 困难 | 1.10 | 0.69 (88%) | 1.02 | 0.8 | 0.2 |
+| 超级困难 | 1.20 | 0.72 (92%) | 1.13 | 0.9 | 0.05 |
+| 地狱级 | 1.30 | 0.75 (96%) | 1.24 | 1.0 | 0.01 |
+| 首领 | 1.40 | 0.78 (100%) | 1.35 | 1.0 | 0.001 |
 
-- `speedMult`: 最高速度倍率，AI 极速上限 `min(450 * speedMult, 600)` + 尾流加成
-- `errorScale`: 转向误差幅度（仅低级 AI 生效，BOSS 几乎无误差）
-- `brakeFactor` / `accelFactor`: 刹车/加速效率倍率
-- `cornerSpeed`: 过弯速度系数（影响速度剖面的缩放，`cornerSpeed / 0.78` 为缩放比）
+- `speedMult`: 最高速度倍率，AI 极速上限 `min(450 * speedMult, 600+boost)`
+- `cornerSpeed`: 过弯速度系数（`cornerSpeed / 0.78` 为速度剖面缩放比，即过弯百分比）
+- `accelFactor`: 加速效率倍率
+- `brakeFactor` / `errorScale`: **当前版本未实装**（死代码，保留备用）
+
+**注意**：当前版本 `errorScale`、`brakeFactor`、`errDrift` 三个参数已定义但未在 AI 代码中引用。AI 走线精度和刹车力度不受难度影响。
+
+### 圈数选项
+
+```javascript
+const LAP_OPTIONS = [3, 5, 8]; // 可选圈数
+```
 
 ### 游戏设置
 
@@ -73,17 +93,43 @@ const gameSettings = {
 
 ---
 
-## 2. 赛道生成与几何
+## 2. 赛道系统
+
+### 赛道数据来源
+
+15 条无自交（WP-intersect=0）的真实 F1 赛道，来自 [meijersa/f1-circuits](https://github.com/meijersa/f1-circuits) GeoJSON 数据集：
+
+| 序号 | 赛道 | ID | 路径点数 |
+|:---:|:-----|:---|:--------:|
+| 1 | 巴林赛道 (Bahrain) | `bahrain` | 63 |
+| 2 | 澳大利亚赛道 (Melbourne) | `melbourne` | 58 |
+| 3 | 上海赛道 (Shanghai) | `shanghai` | 70 |
+| 4 | 西班牙赛道 (Barcelona) | `barcelona` | 68 |
+| 5 | 摩纳哥赛道 (Monaco) | `monaco` | 61 |
+| 6 | 加拿大赛道 (Montreal) | `montreal` | 44 |
+| 7 | 奥地利赛道 (Spielberg) | `spielberg` | 56 |
+| 8 | 英国赛道 (Silverstone) | `silverstone` | 62 |
+| 9 | 匈牙利赛道 (Hungaroring) | `hungaroring` | 63 |
+| 10 | 蒙扎赛道 (Monza) | `monza` | 56 |
+| 11 | 新加坡赛道 (Marina Bay) | `marina` | 57 |
+| 12 | 墨西哥赛道 (Mexico City) | `mexico` | 56 |
+| 13 | 阿布扎比赛道 (Yas Marina) | `yas_marina` | 51 |
+| 14 | 伊莫拉赛道 (Imola) | `imola` | 48 |
+| 15 | 荷兰赛道 (Zandvoort) | `zandvoort` | 70 |
+
+**生成流水线**（`dev/gen_all_tracks.py`）：
+1. 从 GeoJSON 提取 GPS 坐标
+2. `gps_to_local()`: 局部笛卡尔坐标系转换（横轴墨卡托）
+3. `scale_to_target()`: 统一缩放到目标跨度 6500px
+4. `smooth_loop()`: 三重高斯平滑（sigma=[2,3,3]）
+5. `resample_uniform()`: 均匀重采样（间距 280px）
+6. 二次精细平滑 + 重采样
+
+**筛选标准**：所有赛道 WP-intersect=0（路径点无自交）。被排除的赛道：铃鹿(figure-8)、斯帕、COTA、英特拉格斯（有交叉路径），以及吉达、巴库、迈阿密、拉斯维加斯、卢塞尔（OSM 来源或数据质量问题）。
 
 ### 路径点与样条插值
 
-赛道由 16 个路径点（`waypoints`）定义，呈环形布局，包含 4 段直道和 4 组弯道（S 形弯 + 减速弯交替）：
-
-```
-底部（向右）→ 右侧（向上，S弯）→ 顶部（向左）→ 左侧（向下，S弯）→ 回到底部
-```
-
-使用 Catmull-Rom 样条插值（`catmullRom`），每段 24 个细分点，生成约 400 个赛道点。
+使用 Catmull-Rom 样条插值（`catmullRom`），每段 12 个细分点，生成完整赛道点数组。
 
 ```javascript
 function catmullRom(t, p0, p1, p2, p3) {
@@ -103,6 +149,10 @@ function catmullRom(t, p0, p1, p2, p3) {
 | `.nx` / `.ny` | 法线方向（指向赛道外侧） |
 | `.dist` | 从起点到该点的累计路径长度 |
 | `.totalLen` | 赛道总周长 |
+
+### 赛道选择器
+
+覆盖全屏的赛道选择器，每页显示 4 条赛道预览卡片，支持翻页（◀ ▶ 箭头），共 4 页（4+4+4+3）。
 
 ### 最近赛道点查询
 
@@ -126,7 +176,7 @@ function nearestTrackPoint(x, y) {
 
 ### 赛车属性
 
-每辆赛车是一个对象，关键属性：
+每辆赛车是一个对象，完整关键属性：
 
 ```javascript
 {
@@ -134,23 +184,38 @@ function nearestTrackPoint(x, y) {
   speed,            // 当前速度
   heading,          // 朝向（弧度，0=向上）
   lapCount,         // 已完成圈数
+  lastSector,       // 最后通过区域
   onTrack,          // 是否在赛道上
-  blocked,          // 是否被锁定（比赛开始前/结束后）
+  blocked,          // 是否被锁定（发车格）
   braking,          // 刹车灯状态
   color, accent,    // 外观（车身色 + 翼/条纹强调色）
+  num,              // 车号
   // 配色方案 (F1 车队灵感):
   //   p1 #16: 法拉利红 #dc0000 + 金色 #ffd700
   //   p2 #01: 梅赛德斯青 #00d2be + 银 #c0c0c0
   //   a1 #44: 红牛蓝 #1e3a5f + 红 #ff1e00
   //   a2 #77: 迈凯伦木瓜橙 #ff7300 + 深蓝 #002147
-  num,              // 车号
+  lapCooldown,      // 圈计数冷却
+  lapTime,          // 当前单圈时间
+  lapStartTime,     // 当前圈开始时间
   offTrackTimer,    // 冲出赛道计时（>1秒触发重设）
-  _prevIdx,         // 上一帧的最近赛道索引（用于圈数检测）
-  _hasWrapped,      // 是否已绕过赛道末端（用于圈数检测）
+  _prevIdx,         // 上一帧最近赛道索引（圈检测）
+  _hasWrapped,      // 已绕过赛道末端（圈检测）
+  // 尾流属性
+  slipstreamTimer,  // 尾流充电计时器
+  slipStreamBoost,  // 尾流速度加成量（0 或 45）
+  // DRS 属性
+  drsActive,        // DRS 是否激活
+  drsTimer,         // DRS 剩余时间
+  drsCooldown,      // DRS 冷却剩余时间
+  // 干净圈属性
+  hadOfftrack,      // 本圈是否冲出去过
+  hadCollision,     // 本圈是否碰撞过
+  lastLapClean,     // 上一圈是否干净（无冲出+无碰撞）
 }
 ```
 
-AI 额外属性：`trackIdx`, `prevSpeed`, `lineBias`, `slipstreamTimer`, `slipStreamBoost`
+AI 额外属性：`trackIdx`, `prevSpeed`, `lineBias`, `errDrift`, `errTimer`
 
 ### 移动公式
 
@@ -165,7 +230,10 @@ car.y -= Math.cos(car.heading) * car.speed * dt;
 
 ### 速度控制
 
-- **加速**: `speed = min(speed + accel * dt, maxSpeed)`
+- **加速**: `speed = min(speed + accel * dt, 400 + slipStreamBoost + drsBoost)`
+  - 基础极速上限 400
+  - 尾流激活时 +45（上限 445）
+  - DRS 激活时 +45（与尾流叠加达 490）
 - **刹车**: `speed = max(speed - brake * dt, 0)`
 - **空气阻力**: `speed -= drag * (speed/maxSpeed) * dt`（与速度比成比例）
 - **冲出赛道阻力**: `speed -= offTrackDrag * dt`（强力减速）
@@ -176,7 +244,7 @@ car.y -= Math.cos(car.heading) * car.speed * dt;
 
 ```javascript
 const turn = turnLow + (turnHigh - turnLow) * Math.min(speed / maxSpeed, 1);
-// 低速时转向灵 (3.0)，高速时转向迟钝 (0.85)
+// 低速时转向灵敏 (3.0)，高速时转向迟钝 (0.85)
 ```
 
 ### 冲出赛道与重设
@@ -191,21 +259,37 @@ const turn = turnLow + (turnHigh - turnLow) * Math.min(speed / maxSpeed, 1);
 
 ---
 
-## 4. 玩家控制
+## 4. 玩家控制与 DRS
 
 ### 按键映射
 
-- **玩家 1**: 方向键（↑ 加速 / ↓ 刹车 / ← → 转向）
-- **玩家 2**（双人模式）: WASD（W 加速 / S 刹车 / A D 转向）
+| 操作 | 玩家 1（箭头键） | 玩家 2（WASD） |
+|:----:|:----------------:|:--------------:|
+| 加速 | ↑ | W |
+| 刹车 | ↓ | S / **空格** |
+| 左转 | ← | A |
+| 右转 | → | D |
+| **DRS** | **右 Option (Alt)** | **空格** |
 
-### 更新逻辑（`updatePlayer`）
+**注意**：P2 的空格键同时作为刹车和 DRS 激活键。
 
-1. **油门/刹车**: 根据按键加减速，支持倒车
-2. **空气阻力**: 持续作用
-3. **转向**: 速度相关灵敏度
-4. **冲出赛道**: 减速 + 计时（由主循环处理重设）
-5. **刹车灯**: 刹车且速度 > 30 时亮起
-6. **轮胎痕迹**: 刹车或高速转向时留下（仅玩家 1）
+### DRS 激活
+
+```javascript
+if (keyState[km.drs]) {
+  const n = nearestTrackPoint(car.x, car.y);
+  if (speedProfile[n.idx] > DRS_STRAIGHT_THRESHOLD && car.drsCooldown <= 0 && !car.drsActive) {
+    car.drsActive = true;
+    car.drsTimer = DRS_DURATION;
+    car.drsCooldown = car.lastLapClean ? DRS_COOLDOWN_CLEAN : DRS_COOLDOWN;
+  }
+}
+```
+
+- 仅直道可用（speedProfile > 600）
+- 激活后持续 3 秒
+- 冷却 10 秒（完成干净圈后降为 5 秒）
+- DRS 与尾流可叠加（总速度上限 400+45+45=490）
 
 ---
 
@@ -213,15 +297,13 @@ const turn = turnLow + (turnHigh - turnLow) * Math.min(speed / maxSpeed, 1);
 
 ### 总体架构
 
-当前为第 3 代 AI 系统，采用简洁的三层架构：
+简洁的三层架构，不使用机器学习：
 
 ```
 1. 赛道位置追踪 → trackIdx 维护
-2. Pure Pursuit + Cross-track Correction 转向
+2. Pure Pursuit 中心线追踪 + 避让
 3. 曲率速度剖面 + 比例控制器 速度控制
 ```
-
-与之前版本（v3.4 及更早）的关键区别：移除了反打（Scandinavian Flick）、弯心瞄准、横向预测修正、边缘安全网、驾驶噪声等复杂层，仅依赖**保证不离开赛道的最优路径 + 精确追踪 + 平滑速度控制**。
 
 ### 5.1 赛道位置追踪
 
@@ -236,24 +318,20 @@ if (Math.abs(idxDiff) < track.length / 3) car.trackIdx = n.idx;
 
 允许小幅后退修正，防止急弯中索引跳跃。
 
-### 5.2 Pure Pursuit 中心线追踪 + Cross-track Correction
+### 5.2 Pure Pursuit 中心线追踪
 
 核心转向逻辑：追踪前方一定距离的赛道中心线目标点。
 
-**路径选择**：AI 严格沿赛道中心线（`track[tIdx]`）行驶，走线稳定可预测。
+**路径选择**：AI 严格沿赛道中心线行驶，走线稳定可预测。
 
-**动态前视距离**：`lookaheadDist = max(speed * 2.5, 80)`，高速看更远（平滑），低速看更近（精确过弯）。
+**动态前视距离**：`lookaheadDist = max(speed * 2.0, 100)`，范围 [100, 500]。高速看更远（平滑），低速看更近（精确过弯）。
 
-**Cross-track Correction（横向偏差修正）**：当偏离中心线超过 15px 时，叠加反向修正转向角，强度与偏离距离成正比，最大 0.2 rad。这确保 AI 在受干扰（避让、碰撞）后能回到中心线。
+**转向增益**：`2.5`，最大转向速率 `4.0 rad/s`。
 
 ```javascript
-if (cteDist > 15) {
-  const cteSign = ...; // 偏离方向
-  headingErr += sign(cteSign) * 0.2 * min(1, cteDist / 50);
-}
+const steerCmd = Math.sign(headingErr) * Math.min(Math.abs(headingErr) * steerGain, maxSteerRate);
+car.heading += steerCmd * dt;
 ```
-
-**转向增益**：`2.5 + errAbs * 1.2` — 误差越大转向越猛。最大转向速率 `6.0 * dt`（约 0.096 rad/frame @ 60fps），防止高速过度转向。
 
 ### 5.3 AI 避让
 
@@ -261,7 +339,7 @@ if (cteDist > 15) {
 
 ### 5.4 速度控制
 
-基于 **Menger 曲率速度剖面** + **比例控制器**：
+基于 Menger 曲率速度剖面 + 比例控制器：
 
 1. **扫描前方**: 向前扫描速度剖面，查找弯道最低安全速度
 2. **难度缩放**: `cornerLimit = minProfileSpeed * (cornerSpeed / 0.78)`
@@ -271,7 +349,19 @@ if (cteDist > 15) {
    - 误差小 → 轻微减速
    - 接近目标 → 自然平滑趋近
    - 死区 ±3 防止微观振荡
-5. **尾流加成**: 激活尾流时，diffMax 增加 45
+5. **尾流/DRS 加成**: 激活时 diffMax 相应增加
+
+### 5.5 AI DRS
+
+AI 在直道上且速度 > 300 时自动激活 DRS：
+
+```javascript
+if (speedProfile[car.trackIdx] > DRS_STRAIGHT_THRESHOLD && car.drsCooldown <= 0 && !car.drsActive && car.speed > 300) {
+  car.drsActive = true;
+  car.drsTimer = DRS_DURATION;
+  car.drsCooldown = car.lastLapClean ? DRS_COOLDOWN_CLEAN : DRS_COOLDOWN;
+}
+```
 
 ---
 
@@ -283,14 +373,12 @@ if (cteDist > 15) {
 
 1. **Menger 曲率计算**: 在赛道中心线上用 5 点窗口计算曲率
 2. **向内偏移**: `off = -sign(curv) * min(|curv| * 8000, maxOff)`，`maxOff = trackWidth * 0.40`
-3. **Gaussian 平滑**: 2 次 5 点高斯平滑，**附带边界钳制**（`clampDist = trackWidth * 0.42`）保证每个路径点不超出赛道安全范围
+3. **Gaussian 平滑**: 2 次 5 点高斯平滑，附带边界钳制（`clampDist = trackWidth * 0.42`）保证不超出赛道
 4. **切线/法线**: 从平滑后的路径点重新计算
 
 ### 中心线速度剖面（Forward-Backward Min-Time Pass）
 
-赛车游戏中成熟的弯道速度计算方法，在赛道中心线上执行：
-
-1. **曲率限制速度**: `vCurv[i] = sqrt(latAccel / |curv[i]|)`，`latAccel = 500 px/s²`，上限 660
+1. **曲率限制速度**: `vCurv[i] = sqrt(latAccel / |curv[i]|)`，`latAccel = 500`，上限 660
 2. **前进扫描**（加速限制）: 从起点向后，逐点限制加速能力
 3. **后退扫描**（刹车限制）: 从终点向前，逐点限制刹车能力
 4. **平滑处理**: 3 次滑动窗口平均
@@ -303,12 +391,7 @@ if (cteDist > 15) {
 
 ### 发车格
 
-```
-第0排：P1（左）  P2/AI#44（右）
-第1排：AI#44/#77（左）  AI#77（右）
-```
-
-排间距 126px，列间距 56px。赛车方向与赛道起始点切线对齐。
+赛车排布在主直道上，位置由 `startWp` 决定。
 
 ### 倒计时
 
@@ -322,14 +405,12 @@ if (cteDist > 15) {
 
 1. **Wrap 检测**: 赛车从赛道末端（>70%）穿越到起点（<30%）→ `_hasWrapped = true`
 2. **终点线检测**: `_hasWrapped` 为 true 且从 `finishIdx` 之前穿越到之后 → 计圈
-3. **防冲出赛道破坏**: `_prevIdx` 仅在 on-track 且速度 > 30 时更新（不受 off-track 帧污染）
-4. **重生保护**: 冲出赛道重生时，`_prevIdx` 同步到重生点，`_hasWrapped` 保留
-5. **终点线后重生处理**: 若 `_hasWrapped = true` 且重生点在终点线后，立即计圈
-6. 冷却时间 1.5 秒防止重复计圈
+3. **干净圈评估**: 计圈时检查 `hadOfftrack` 和 `hadCollision` 标志，更新 `lastLapClean`
+4. 冷却时间 1.5 秒防止重复计圈
 
 ### 完赛条件
 
-任意赛车完成设定圈数（3/5/8/10 圈可选）后，比赛结束并显示排名。
+任意赛车完成设定圈数（3/5/8 圈可选）后，比赛结束并显示排名。
 
 ---
 
@@ -341,7 +422,8 @@ if (cteDist > 15) {
 - 沿法线方向推开（重叠量 × 0.6）
 - 速度交换带阻尼（动量 × 0.12 / × 0.6）
 - 碰撞位置产生火花效果
-- AI-AI 碰撞跳过（仅靠避让推挤保持间距）
+- 设置 `hadCollision = true`（用于干净圈判定）
+- AI-AI 碰撞跳过
 
 ---
 
@@ -351,21 +433,60 @@ if (cteDist > 15) {
 
 后车跟随前车时获得的极速加成：
 
-- **检测距离**: 170px（约 2 个车身长度）
+- **检测距离**: 250px（约 3 个车身长度）
 - **方向一致性**: 航向偏差 < 0.5 rad
 - **充电时间**: 0.5 秒持续跟随 → 激活尾流
-- **加速效果**: +45 km/h 极速加成
+- **加速效果**: +45 极速加成
 - **衰减**: 脱离尾流后快速衰减（-2x/秒）
 
 ### 视觉反馈
 
-- 车速 > 300 时车尾绘制淡蓝色渐变气流线条
-- 尾流激活时气流加强 + 粒子光点效果
-- HUD 显示 `[尾流]` 标签
+- 车速 > 200 时车尾绘制淡蓝色渐变气流线条
+- 尾流激活时 HUD 显示 `[尾流]` 标签
 
 ---
 
-## 10. 渲染系统
+## 10. DRS 减阻系统
+
+### 原理
+
+手工触发的直道加速系统，模拟真实 F1 的 Drag Reduction System。
+
+### 特性
+
+| 参数 | 值 |
+|:----:|:---:|
+| 速度加成 | +45（与尾流叠加达 +90） |
+| 持续时间 | 3 秒 |
+| 正常冷却 | 10 秒 |
+| 干净圈冷却 | 5 秒 |
+| 激活条件 | 直道（speedProfile > 600）+ 冷却完毕 |
+| 操作方式 | P1: 右 Option / P2: 空格 |
+
+### 干净圈判定
+
+每圈结束时自动评估：
+
+```javascript
+c.lastLapClean = !c.hadOfftrack && !c.hadCollision;
+```
+
+- `hadOfftrack`：冲出赛道时设置（即使在 1 秒重生前就返回赛道）
+- `hadCollision`：碰撞时设置（两车均标记）
+- `lastLapClean` 影响 DRS 冷却时间：10 秒 → 5 秒
+
+### 视觉反馈
+
+- DRS 激活时车尾喷出绿色渐变尾焰 + 粒子
+- HUD 显示：
+  - `[DRS]` 青色/黄色 — 直道上可激活
+  - `[DRS 2.3s]` 绿色 — 激活中倒计时
+  - `[DRS CD 8.1s]` 红色 — 冷却中
+- HUD 显示 `[干净圈]` 绿色徽章
+
+---
+
+## 11. 渲染系统
 
 ### 赛道渲染
 
@@ -379,19 +500,14 @@ if (cteDist > 15) {
 - 完整 F1 车体绘制（端板、前翼、尾翼、Halo、中线、号码）
 - 车轮带纹理
 - 刹车灯：尾部红色发光效果
-- 缩放系数 `scale`：渲染小车用于发车格
 
 ### 气动尾流（`drawWake`）
 
-速度 > 300 时，车尾绘制渐变半透明气流线条：
+速度 > 300 时，车尾绘制渐变半透明气流线条。
 
-```javascript
-const intensity = Math.min(1, (car.speed - 300) / 150);
-```
+### DRS 尾焰（`drawDRS`）
 
-- 长度：30 + `intensity` × 50 像素
-- 宽度：8 + `intensity` × 10 像素
-- 梯形渐变为蓝色半透明
+DRS 激活时车尾绘制绿色渐变三角形 + 绿色粒子。
 
 ### 速度线（`drawSpeedLines`）
 
@@ -401,193 +517,113 @@ const intensity = Math.min(1, (car.speed - 300) / 150);
 
 - 草地：4000 个随机草叶 + 径向渐变
 - 轮胎痕迹：最多 2500 条，逐渐透明
-- **刹车痕迹**：所有赛车刹车时在赛道留下黑色印记
-  - 印记最大数量 3000，每帧在左右后轮位置各添加一条（间隔 15px）
-  - 保留 5 秒，前 3 秒全透明，后 2 秒逐渐淡化消失
-  - 渲染在赛道表面之上（`drawTrack` → `drawBrakeMarks` → 赛车）
-  - 仅当赛车在赛道上且速度 > 50 时产生
+- **刹车痕迹**：所有赛车刹车时在赛道留下黑色印记（最多 3000 条），保留 5 秒
 - 火花：碰撞时产生，生命周期 0.2-0.6 秒
 
 ### 相机系统
 
-- **全部聚焦**: 所有赛车的中心点 + 平滑跟随（阻尼系数 0.09）
+- **全部聚焦**: 所有赛车包围盒中心 + 平滑跟随（阻尼系数 0.09）
 - **单目标聚焦**: 平滑跟随指定车辆
-- **动态缩放**: 全部聚焦模式下，计算所有赛车的包围盒并动态调整缩放值，确保所有赛车始终可见
-  - 缩放值在 `ZOOM=0.85`（单目标）到 `0.15`（最大拉远）之间平滑过渡
-  - **双极低通滤波**：先对 `targetZoom` 做一级平滑（系数 0.05），再对 `currentZoom` 做二级平滑（系数 0.10），消除段落感
-  - 包围盒四周保留 20% 屏幕边距，保证赛车不贴边
-  - 单目标聚焦时固定使用 `ZOOM=0.85`
-- **双相机系统（双人分屏）**: `cam`（P1 左半屏）和 `cam2`（P2 右半屏）独立追踪各自目标
-  - 半屏聚焦公式：`cam.x = target.x - W/(4*ZOOM)`
-  - 使用 `renderView(ox, oy, vw, vh, camObj, zoomVal, camPlayer)` 渲染通用函数，内部 `ctx.save/clip/restore` 实现视口隔离
-- **焦点循环（双人模式）**: 分屏 → 全局单视图 → 各车辆追踪 → 回到分屏，`dualSplit` 布尔值控制渲染模式
+- **动态缩放**: 缩放值在 0.85（单目标）到 0.15（最大拉远）之间平滑过渡
+  - 双极低通滤波：先对 `targetZoom` 做一级平滑（系数 0.05），再对 `currentZoom` 做二级平滑（系数 0.10）
+- **双相机系统（双人分屏）**: `cam` 和 `cam2` 独立追踪各自目标
+  - 使用 `renderView(ox, oy, vw, vh, camObj, zoomVal, camPlayer)` 渲染，`ctx.save/clip/restore` 实现视口隔离
 
 ### 小地图（Minimap）
 
-- **位置**: 右下角（`W-174, H-224`），140×120px 半透明背景
-- **绘制内容**: 赛道区域（外缘/内缘/中心线）+ 赛车位置点
-- **赛车点绘制**: 外层 4.5px 圆 = `c.color`（车身色），内层 2.5px 圆点 = `c.accent`（翼/条纹强调色）
-- **当前玩家高亮**: P1（和 P2 双人模式）带白色 2px 边框；AI 车辆带深色 1px 边框
-- **坐标系缩放**: 使用预计算 `trackBounds`（赛道世界坐标范围）将世界坐标映射到小图像素坐标
+- 右下角，140×120px 半透明背景
+- 绘制赛道区域 + 赛车位置点
+- 当前玩家高亮带白色边框
 
 ---
 
-## 11. HUD 与 UI
+## 12. HUD 与 UI
 
 - **左侧面板**: 排名、比赛时间、单圈时间、速度、档位、圈数
-- **右侧面板**: 其他车辆的实时数据
+- **右侧面板**: 其他车辆实时数据
 - **底部**: 难度、焦点、操作提示
+- **DRS 状态**: DRS 可用/激活/冷却 + 干净圈徽章
 - **结束面板**: 获胜者、排名、总用时
+
+### 赛道选择器
+
+- 点击 ⚇ 赛道 按钮打开
+- 每页 4 条赛道预览卡片（260×270px）
+- ◀ ▶ 箭头翻页
+- 绿色边框标记当前选中的赛道
+- 底部显示页码（如 "第 2/4 页"）
 
 ---
 
-## 12. 开发流程与演进历史
+## 13. 开发流程与演进历史
 
 ### v0 — 原型
-
 - 基础赛道生成（Catmull-Rom 样条）
-- 玩家操控（方向盘、加减速）
-- 基础渲染（简易赛道 + 矩形车身）
+- 玩家操控 + 基础渲染
 
-### v1 — 基本 AI
+### v1 — v3.6
+- AI、双人模式、碰撞系统、尾流、分屏等逐步迭代
 
-- 添加纯追逐 Pure Pursuit 转向
-- 曲率速度剖面预计算
-- AI 跟随中心线行驶
-- 基础圈数检测
-
-### v2 — 双人模式、AI 扩展
-
-- 双人同屏控制
-- 多 AI 支持（#44 / #77）
-- 完整碰撞系统
-- 发车格倒计时
-- HUD 面板
-
-### v2.1 — AI 稳定性、焦点切换
-
-- 相机焦点切换功能
-- AI 漂移误差系统（不同等级不同误差）
-- 刹车灯
-- 发车格使用完整车体渲染
-
-### v2.2 — 弯道能力进化
-
-- AI 过弯从中心线跟随 → 赛车线偏移（曲率 × 8000 + Gaussian 平滑）
-- **问题**: AI 仍然像撞墙一样滑出
-- **解决**: 移除 AI 强制恢复逻辑，使用与玩家相同的 off-track 减速 + 重设
-
-### v2.3 — 预判转向引入
-
-- **问题**: AI 到弯道边缘才修正，太晚
-- **解决**: 3 秒前瞻预判转向 + 车身边缘碰撞检测
-
-### v2.4 — 反打技术（Scandinavian Flick）
-
-- **问题**: 急弯仍然不自然，无法流畅入弯
-- **解决**: Phase 1 反打（向外摆）+ Phase 2 入弯的 out-in-out 技术
-
-### v2.5 — 自适应急弯
-
-- **问题**: > 90° 急弯反打不足
-- **解决**: 速度剖面扫描检测弯急程度，自适应调整反打幅度和转向增益
-
-### v2.6 — 视觉效果
-
-- 高速尾部气流渐变效果
-- 入弯路径可视化
-
-### v2.7 — 动态缩放
-
-- 全部聚焦模式下根据赛车包围盒自动调整缩放值
-- 双极低通滤波消除段落感
-
-### v2.8 — 出弯跟踪（Track-out）
-
-- 弯心过后增加出弯跟踪阶段，瞄准外侧出口目标
-
-### v2.9 — 刹车痕迹
-
-- 所有赛车刹车时留下黑色刹车印记
-
-### v3.0 — 弯道边缘余量优化
-
-- 降低反打摆动阈值，留出约半个车宽的安全距离
-- 边缘安全网阈值收紧
-
-### v3.1 — 赛车配色 + 车队涂装
-
-- 采用真实 F1 车队配色方案（法拉利红、梅赛德斯青、红牛蓝、迈凯伦木瓜橙）
-
-### v3.2 — 5 秒路径预测 + 双轨刹车痕 + BOSS 极速 400
-
-- 前瞻从 3 秒增至 5 秒
-- 刹车痕改为左右后轮双轨
-- BOSS 极速硬上限 400
-
-### v3.3 — 分屏双人 + 小地图 + 中文界面
-
-- 双人分屏模式（`ctx.save/clip/restore` 视口隔离）
-- 右下角小地图
-- 全界面中文显示
-
-### v3.4 — 尾流加速系统 + 极速 400
-
-- Slipstream/Drafting 系统（90px 距离、1s 充电、+45 km/h）
-- 玩家和 AI 极速统一至 400 km/h
-
-### v3.5 — AI 重构：最优路径 + 简化驾驶
-
-- **问题**: 多层安全系统（反打 + 弯心瞄准 + 横向预测 + 边缘安全网）相互干扰，过度复杂
-- **解决**: 废弃 Scandinavian Flick 反打逻辑，改用 Pure Pursuit + 预计算最优赛车线
-- 最优路径计算增加 Gaussian 平滑边界钳制，保证不超出赛道
-- 速度剖面从中心线曲率改为赛车线曲率（更精确）
-- 移除了驾驶噪声系统、边缘安全网、横向预测修正、防甩尾
-
-### v3.6 — 中心线追踪 + 比例速度控制 + 赛道适配
-
-- **问题**: AI 仍然会冲出赛道，刹车/加速振荡
-- **解决**:
-  - 从赛车线改为**严格赛道中心线追踪**，转向增益增强（`2.5 + errAbs * 1.2`）
-  - 新增 **Cross-track Correction**（偏离中心线 15px 以上时自动修正）
-  - 速度控制改为**比例控制器**（`spdErr * 2.0`），消除刹车/加速二进制振荡
-  - 速度剖面改回中心线曲率（与行驶路径一致）
-- **圈数检测修复**:
-  - `_prevIdx` 移入 on-track 条件内，防止 off-track 帧污染
-  - 冲出赛道重生时不重置 `_hasWrapped`
-  - 处理 `_hasWrapped = true` 但重生点在终点线后的边缘情况
-- **尾流优化**: 探测距离 `90 → 170px`（约 2 车长），充电时间 `1.0 → 0.5s`
-- **计算时机**: 最优路径和速度剖面从页面加载时改为**倒计时开始时**计算
+### v4 — 真实 GPS 赛道 + DRS
+- 引入真实 F1 赛道数据（meijersa/f1-circuits GeoJSON）
+- 24 条赛道 → 筛选为 15 条无自交赛道
+- 赛道生成流水线：GPS → 平滑 → 重采样 → 赛道点
+- 添加 DRS 加速系统（P1 Alt / P2 空格）
+- 干净圈跟踪机制（hadOfftrack + hadCollision）
+- DRS 冷却：正常 10 秒 / 干净圈 5 秒
+- 等距 AI 难度梯度（0.90×~1.40× / 80%~100% 过弯）
+- 赛道选择器分页（4 条/页，共 4 页）
+- 赛事里程碑版本管理（versions/ 目录）
 
 ---
 
 ## 关键技术决策
 
-1. **为什么用 Pure Pursuit + 速度剖面而非机器学习？**
-   Pure Pursuit 可预测、可调试、确定性高。速度剖面（前进-后退扫描方法）是赛车游戏事实标准。
+1. **为什么用真实 GPS 赛道而非手绘？**
+   真实 F1 赛道布局能提供更好的游戏体验。通过 meijersa/f1-circuits GeoJSON 数据集获取 21 条赛道，加上 OpenStreetMap 补充 3 条，经平滑和缩放处理后统一到游戏坐标系。
 
-2. **为什么没有赛道围墙？**
-   赛车滑出赛道后应自然滑动而非撞墙反弹，保持真实感。off-track 效果与玩家完全一致。
+2. **为什么只保留 15 条赛道？**
+   从 24 条赛道中过滤掉自交（WP-intersect>0）的赛道，确保赛车在赛道上的行驶逻辑正确。铃鹿的 figure-8、斯帕的交叉段等会导致圈数检测异常。
 
-3. **为什么从赛车线改为中心线？**
-   中心线追踪更稳定、可预测，不易冲出赛道。赛车线在高速急弯中需要更复杂的修正逻辑。简化后的三层架构（Pure Pursuit + Cross-track Correction + 比例速度控制）足以让 BOSS 级 AI 稳定完成比赛。
+3. **为什么 DRS 与尾流不互斥？**
+   DRS 和尾流在真实 F1 中可同时使用（在 DRS 检测区内且与前车差距 < 1 秒）。游戏中叠加提供更多策略深度。
 
-4. **为什么使用 Cross-track Correction？**
-   作为 Pure Pursuit 的补充，当 AI 因避让或碰撞偏离中心线时，主动修正路径回到中心线，替代了之前复杂的边缘安全网系统。
+4. **为什么干净圈只需无冲出+无碰撞？**
+   这是干净圈的最小合理定义。真实 F1 的赛道限制更复杂（切弯、超出赛道线等），但游戏中的 off-track 检测已覆盖主要违规行为。
 
 5. **为什么圈数检测状态需要保护？**
    冲出赛道重设时如果重置 `_hasWrapped`，已绕圈的进度丢失，会导致圈数少计。将 `_prevIdx` 移入 on-track 条件内防止 off-track 帧污染，联合重生点同步策略，确保冲出赛道不影响圈数统计。
 
+6. **为什么 errorScale/brakeFactor 未实装？**
+   当前 AI 的走线精度和刹车力度在所有难度下相同，差异仅体现在速度上。这些参数保留用于未来需要更精细难度调校时的扩展。
+
 ---
+
+## 项目结构
+
+```
+F1/
+├── index.html              ← 成品（15 条赛道 DRS 主文件）
+├── dev/                    ← 开发文件
+│   ├── gen_all_tracks.py   ← 15 条赛道生成脚本
+│   ├── gen_tracks_final.py ← 旧版生成脚本（单条赛道）
+│   ├── parse_circuits.py   ← GPS 数据解析脚本
+│   ├── design_tracks*.py   ← 赛道设计脚本（历史）
+│   ├── PROMPT.md           ← 本文档
+│   ├── data/
+│   │   └── f1-circuits.geojson  ← F1 赛道 GPS 数据源
+│   ├── track_viz/          ← SVG/PNG 可视化文件
+│   └── 赛道地图*.jpg/png/webp ← 参考图片
+└── versions/               ← 历史里程碑版本
+    ├── F1-v2.html ~ v4.html    ← 迭代版本
+    ├── v4-milestone.html       ← v4 里程碑
+    ├── f1-milestone-v2-multi-circuit.html  ← 11 赛道里程碑
+    └── f1-milestone-v2-15-circuits.html    ← 15 赛道最终版
+```
 
 ## 启动方式
 
-任何 HTTP 服务器均可：
-
 ```bash
-python3 -m http.server 8080
-# 或
-npx serve .
+# 直接浏览器打开 index.html 即可
+open index.html
 ```
-
-浏览器打开即可游戏。
