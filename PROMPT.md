@@ -204,6 +204,7 @@ function nearestTrackPoint(x, y) {
   // 尾流属性
   slipstreamTimer,  // 尾流充电计时器
   slipStreamBoost,  // 尾流速度加成量（0 或 45）
+  trail,            // 最近轨迹历史 [{x, y, fx, fy}]，最多 40 点，用于尾流圆弧渲染
   // DRS 属性
   drsActive,        // DRS 是否激活
   drsTimer,         // DRS 剩余时间
@@ -441,7 +442,7 @@ if (speedProfile[car.trackIdx] > DRS_STRAIGHT_THRESHOLD && car.drsCooldown <= 0 
 
 ### 视觉反馈
 
-- 车速 > 200 时车尾绘制淡蓝色渐变气流线条
+- 尾流激活时车尾沿最近轨迹绘制淡蓝色弯曲气流条带（`car.trail`，弯道中呈圆弧，符合空气动力学）
 - 尾流激活时 HUD 显示 `[尾流]` 标签
 
 ---
@@ -501,9 +502,13 @@ c.lastLapClean = !c.hadOfftrack && !c.hadCollision;
 - 车轮带纹理
 - 刹车灯：尾部红色发光效果
 
-### 气动尾流（`drawWake`）
+### 气动尾流（`drawWake` / `drawSlipstream`）
 
-速度 > 300 时，车尾绘制渐变半透明气流线条。
+速度 > 300 时（`drawWake`）或尾流激活时（`drawSlipstream`），车尾绘制渐变半透明气流条带。
+条带由 `buildWakeRibbon()` 沿赛车最近轨迹（`car.trail`，最多 40 个采样点）构建：
+中心线为轨迹上各点的车尾位置，半宽由车尾到尾端渐缩，逐段衰减透明度。
+弯道中尾流自然弯曲成圆弧（符合空气动力学），直线行驶时与原直线效果一致。
+冲出赛道重设时清空 `trail`，避免尾流横跨瞬移路径。
 
 ### DRS 尾焰（`drawDRS`）
 

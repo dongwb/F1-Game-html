@@ -1535,7 +1535,7 @@ const p1 = {
   x: 0, y: 0, speed: 0, heading: 0, lapCount: 0, lastSector: -1, onTrack: true, blocked: false, braking: false,
   color: '#dc0000', accent: '#ffd700', num: '16', lapCooldown: 0, lapTime: 0, lapStartTime: 0,
   keys: { up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight', drs: 'Alt' },
-  offTrackTimer: 0, _prevIdx: 0, _hasWrapped: false, slipstreamTimer: 0, slipStreamBoost: 0,
+  offTrackTimer: 0, _prevIdx: 0, _hasWrapped: false, slipstreamTimer: 0, slipStreamBoost: 0, trail: [],
   drsActive: false, drsTimer: 0, drsCooldown: 0, hadOfftrack: false, hadCollision: false, lastLapClean: false,
 };
 
@@ -1543,7 +1543,7 @@ const p2 = {
   x: 0, y: 0, speed: 0, heading: 0, lapCount: 0, lastSector: -1, onTrack: true, blocked: false, braking: false,
   color: '#00d2be', accent: '#c0c0c0', num: '01', lapCooldown: 0, lapTime: 0, lapStartTime: 0,
   keys: { up: 'w', down: 's', left: 'a', right: 'd', drs: ' ' },
-  offTrackTimer: 0, _prevIdx: 0, _hasWrapped: false, slipstreamTimer: 0, slipStreamBoost: 0,
+  offTrackTimer: 0, _prevIdx: 0, _hasWrapped: false, slipstreamTimer: 0, slipStreamBoost: 0, trail: [],
   drsActive: false, drsTimer: 0, drsCooldown: 0, hadOfftrack: false, hadCollision: false, lastLapClean: false,
 };
 
@@ -1551,7 +1551,7 @@ const a1 = {
   x: 0, y: 0, speed: 0, heading: 0, lapCount: 0, lastSector: -1, onTrack: true, blocked: false, braking: false,
   color: '#1e3a5f', accent: '#ff1e00', num: '44', lapCooldown: 0, lapTime: 0, lapStartTime: 0,
   errDrift: 0, errTimer: 0, trackIdx: 0, prevSpeed: 0, lineBias: 0,
-  offTrackTimer: 0, _prevIdx: 0, _hasWrapped: false, slipstreamTimer: 0, slipStreamBoost: 0,
+  offTrackTimer: 0, _prevIdx: 0, _hasWrapped: false, slipstreamTimer: 0, slipStreamBoost: 0, trail: [],
   drsActive: false, drsTimer: 0, drsCooldown: 0, hadOfftrack: false, hadCollision: false, lastLapClean: false,
 };
 
@@ -1559,7 +1559,7 @@ const a2 = {
   x: 0, y: 0, speed: 0, heading: 0, lapCount: 0, lastSector: -1, onTrack: true, blocked: false, braking: false,
   color: '#ff7300', accent: '#002147', num: '77', lapCooldown: 0, lapTime: 0, lapStartTime: 0,
   errDrift: 0, errTimer: 0, trackIdx: 0, prevSpeed: 0, lineBias: 0.12,
-  offTrackTimer: 0, _prevIdx: 0, _hasWrapped: false, slipstreamTimer: 0, slipStreamBoost: 0,
+  offTrackTimer: 0, _prevIdx: 0, _hasWrapped: false, slipstreamTimer: 0, slipStreamBoost: 0, trail: [],
   drsActive: false, drsTimer: 0, drsCooldown: 0, hadOfftrack: false, hadCollision: false, lastLapClean: false,
 };
 
@@ -1595,6 +1595,7 @@ function initPositions() {
     c.lapCount = 0; c.lastSector = -1; c.blocked = true;
     c.lapCooldown = 0; c.lapTime = 0; c.lapStartTime = 0;
     c.onTrack = true; c.braking = false; c.offTrackTimer = 0;
+    c.trail.length = 0;
     c.drsActive = false; c.drsTimer = 0; c.drsCooldown = 0;
     c.hadOfftrack = false; c.hadCollision = false; c.lastLapClean = false;
     if (c.trackIdx !== undefined) { c.trackIdx = startIdx; c.errDrift = 0; c.errTimer = 0; c.prevSpeed = 0; }
@@ -1974,31 +1975,82 @@ function drawCar(x, y, heading, c, scale) {
 // ============================================================
 // SPEED WAKE
 // ============================================================
+// ============================================================
+// 尾流条带（Wake Ribbon）— 符合空气动力学的弯曲尾流
+// 尾流沿赛车最近的真实轨迹（car.trail）延伸，弯道中自然形成圆弧，
+// 而不是沿当前朝向的一条直线。
+// ============================================================
+// 沿轨迹构建尾流中心线采样点（车尾 → 尾端），附带圆弧参数 t、
+// 半宽 w（由 w0 渐缩到 w1）和法线 (nx, ny)。轨迹不足时返回 null。
+function buildWakeRibbon(car, len, w0, w1) {
+  const trail = car.trail;
+  if (!trail || trail.length < 2) return null;
+  // 中心线 = 轨迹上每个采样点的车尾位置（从新到旧）
+  const pts = [];
+  let acc = 0, prevX = 0, prevY = 0;
+  for (let i = trail.length - 1; i >= 0 && acc < len; i--) {
+    const p = trail[i];
+    const rx = p.x - p.fx * 42, ry = p.y - p.fy * 42;
+    if (pts.length === 0) { pts.push({ x: rx, y: ry }); prevX = rx; prevY = ry; continue; }
+    const dx = rx - prevX, dy = ry - prevY;
+    const d = Math.sqrt(dx * dx + dy * dy);
+    if (d < 0.5) continue; // 赛车几乎未动，跳过重复采样
+    if (acc + d >= len) {
+      // 在尾流长度处精确截断
+      const s = (len - acc) / d;
+      pts.push({ x: prevX + dx * s, y: prevY + dy * s });
+      acc = len;
+    } else {
+      pts.push({ x: rx, y: ry });
+      acc += d;
+    }
+    prevX = rx; prevY = ry;
+  }
+  if (pts.length < 2) return null;
+  const total = acc || 1;
+  let dacc = 0;
+  for (let i = 0; i < pts.length; i++) {
+    if (i > 0) {
+      const dx = pts[i].x - pts[i - 1].x, dy = pts[i].y - pts[i - 1].y;
+      dacc += Math.sqrt(dx * dx + dy * dy);
+    }
+    // 用相邻点的中心差分求方向，保证拐角处法线平滑
+    const a = pts[Math.max(0, i - 1)], b = pts[Math.min(pts.length - 1, i + 1)];
+    let tx = b.x - a.x, ty = b.y - a.y;
+    const m = Math.sqrt(tx * tx + ty * ty) || 1;
+    pts[i].t = Math.min(1, dacc / total);
+    pts[i].w = w0 + (w1 - w0) * pts[i].t;
+    pts[i].nx = ty / m; pts[i].ny = -tx / m;
+  }
+  return { pts, len: total };
+}
+
+// 分段填充尾流条带：透明度从车尾到尾端逐渐衰减
+function fillWakeRibbon(ribbon, alpha, rgb) {
+  const pts = ribbon.pts;
+  ctx.save();
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[i], p1 = pts[i + 1];
+    ctx.beginPath();
+    ctx.moveTo(p0.x + p0.nx * p0.w, p0.y + p0.ny * p0.w);
+    ctx.lineTo(p0.x - p0.nx * p0.w, p0.y - p0.ny * p0.w);
+    ctx.lineTo(p1.x - p1.nx * p1.w, p1.y - p1.ny * p1.w);
+    ctx.lineTo(p1.x + p1.nx * p1.w, p1.y + p1.ny * p1.w);
+    ctx.closePath();
+    ctx.fillStyle = `rgba(${rgb}, ${alpha * (1 - (p0.t + p1.t) / 2)})`;
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
 function drawWake(car) {
   if (car.speed <= 300) return;
   const intensity = Math.min(1, (car.speed - 300) / 150);
   const wakeLen = 30 + intensity * 50;
   const wakeW = 8 + intensity * 10;
-  const cosH = Math.cos(car.heading), sinH = Math.sin(car.heading);
-  // Rear of car body
-  const rx = car.x - sinH * 42, ry = car.y + cosH * 42;
-  // End of wake
-  const ex = rx - sinH * wakeLen, ey = ry + cosH * wakeLen;
-  const hw = wakeW / 2, fw = hw * 0.3;
-
-  ctx.save();
-  ctx.beginPath();
-  ctx.moveTo(rx + cosH * hw, ry + sinH * hw);
-  ctx.lineTo(rx - cosH * hw, ry - sinH * hw);
-  ctx.lineTo(ex - cosH * fw, ey - sinH * fw);
-  ctx.lineTo(ex + cosH * fw, ey + sinH * fw);
-  ctx.closePath();
-  const grad = ctx.createLinearGradient(rx, ry, ex, ey);
-  grad.addColorStop(0, `rgba(180, 210, 255, ${0.25 * intensity})`);
-  grad.addColorStop(1, 'rgba(180, 210, 255, 0)');
-  ctx.fillStyle = grad;
-  ctx.fill();
-  ctx.restore();
+  const ribbon = buildWakeRibbon(car, wakeLen, wakeW / 2, wakeW * 0.15);
+  if (!ribbon) return;
+  fillWakeRibbon(ribbon, 0.25 * intensity, '180, 210, 255');
 }
 
 function drawSlipstream(car) {
@@ -2006,33 +2058,21 @@ function drawSlipstream(car) {
   const intensity = Math.min(1, car.slipstreamTimer / 1.5);
   const len = 40 + intensity * 60;
   const w = 6 + intensity * 12;
-  const cosH = Math.cos(car.heading), sinH = Math.sin(car.heading);
-  // Rear of car body
-  const rx = car.x - sinH * 42, ry = car.y + cosH * 42;
-  // End of wake
-  const ex = rx - sinH * len, ey = ry + cosH * len;
-  const hw = w / 2, fw = hw * 0.3;
+  const ribbon = buildWakeRibbon(car, len, w / 2, w * 0.15);
+  if (!ribbon) return;
+  fillWakeRibbon(ribbon, 0.35 * intensity, '100, 200, 255');
 
+  // 沿弯曲尾流散布的辉光粒子
+  const pts = ribbon.pts;
   ctx.save();
-  ctx.beginPath();
-  ctx.moveTo(rx + cosH * hw, ry + sinH * hw);
-  ctx.lineTo(rx - cosH * hw, ry - sinH * hw);
-  ctx.lineTo(ex - cosH * fw, ey - sinH * fw);
-  ctx.lineTo(ex + cosH * fw, ey + sinH * fw);
-  ctx.closePath();
-  const grad = ctx.createLinearGradient(rx, ry, ex, ey);
-  grad.addColorStop(0, `rgba(100, 200, 255, ${0.35 * intensity})`);
-  grad.addColorStop(1, 'rgba(100, 200, 255, 0)');
-  ctx.fillStyle = grad;
-  ctx.fill();
-
-  // Additional glow particles
   for (let i = 0; i < 4; i++) {
-    const t = Math.random();
-    const px = rx + (ex - rx) * t + (Math.random() - 0.5) * w;
-    const py = ry + (ey - ry) * t + (Math.random() - 0.5) * w;
+    const seg = Math.floor(Math.random() * (pts.length - 1));
+    const p0 = pts[seg], p1 = pts[seg + 1];
+    const s = Math.random();
+    const t = p0.t + (p1.t - p0.t) * s;
+    const off = (Math.random() - 0.5) * w;
     ctx.beginPath();
-    ctx.arc(px, py, 2 + Math.random() * 3, 0, Math.PI * 2);
+    ctx.arc(p0.x + (p1.x - p0.x) * s + p0.nx * off, p0.y + (p1.y - p0.y) * s + p0.ny * off, 2 + Math.random() * 3, 0, Math.PI * 2);
     ctx.fillStyle = `rgba(100, 200, 255, ${0.3 * intensity * (1 - t)})`;
     ctx.fill();
   }
@@ -2818,6 +2858,12 @@ function gameLoop(time) {
     // Slipstream / drafting
     for (const c of getActiveCars()) { if (!c.blocked) updateSlipstream(c, dt); }
 
+    // 记录轨迹历史（用于尾流圆弧渲染），队尾为最新位置
+    for (const c of getActiveCars()) {
+      c.trail.push({ x: c.x, y: c.y, fx: Math.sin(c.heading), fy: -Math.cos(c.heading) });
+      if (c.trail.length > 40) c.trail.shift();
+    }
+
     // Collisions
     if (race.phase === 'RACING') checkCollisions();
     updateSparks(dt);
@@ -2831,6 +2877,7 @@ function gameLoop(time) {
           c.offTrackTimer += dt;
           if (c.offTrackTimer > 1.0) {
             c.x = n.point.x; c.y = n.point.y;
+            c.trail.length = 0; // 清空轨迹，避免尾流横跨瞬移路径
             c.heading = Math.atan2(n.point.tx, -n.point.ty);
             c.speed = 50;
             if (c.trackIdx !== undefined) { c.trackIdx = n.idx; c.errDrift = 0; c.errTimer = 0; c.prevSpeed = 0; }
