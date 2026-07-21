@@ -498,8 +498,9 @@ c.lastLapClean = !c.hadOfftrack && !c.hadCollision;
 
 ### 赛车渲染
 
-- 完整 F1 车体绘制（端板、前翼、尾翼、Halo、中线、号码）
-- 车轮带纹理
+- 俯视卡通 F1 造型（宽前翼、细长鼻锥、深色座舱、侧箱收腰车身、深色尾翼）
+- 圆角矩形轮胎，前轮小、后轮大
+- 白色车号 + accent 中央拉花区分配色
 - 刹车灯：尾部红色发光效果
 
 ### 气动尾流（`drawWake` / `drawSlipstream`）
