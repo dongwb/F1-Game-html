@@ -1,4 +1,4 @@
-# F1 Grand Prix
+# F1 赛车游戏 Grand Prix
 
 一个纯前端的 F1 赛车游戏：单文件 `index.html`，零依赖，浏览器打开即玩。
 
